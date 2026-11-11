@@ -1,0 +1,298 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="980" height="780" viewBox="0 0 980 780" class="gf" role="img" aria-label="dsh-depth-tool-gate 子代理创建瞬间的闸门流程图" font-family="'Segoe UI','Microsoft YaHei','PingFang SC','Noto Sans CJK SC',sans-serif">
+  <title>dsh-depth-tool-gate · 子代理创建那一刻，闸门做了什么</title>
+  <desc>子代理被创建时，宿主侧插件的闸门按六张策略名单算出有效禁用集合，判断该 preset 是否挂载 role-briefs，然后注入岗位引导、遮蔽提示死段、调用宿主 API 裁剪工具面，并把每个决策写入 audit.jsonl。</desc>
+
+  <style>
+    /* 默认分支按浅色背景设计：深色文字、浅灰描边 */
+    svg.gf{
+      --fg:#16202e; --fg2:#44536a; --fg3:#5b6b80;
+      --line:#8ea1b7; --line2:#4a5c72;
+      --bg-soft:rgba(22,32,46,.05); --bg-head:rgba(22,32,46,.10);
+      --violet:#6b5fd4; --blue:#1d4ed8; --indigo:#4f46e5; --purple:#7c3fb0;
+      --cyan:#0e7490; --green:#157a52; --amber:#8f6408; --teal:#2f6f74;
+      --steel:#4f6383; --gray:#5c6675;
+      --t-violet:rgba(107,95,212,.09); --t-blue:rgba(29,78,216,.08);
+      --t-indigo:rgba(79,70,229,.08); --t-purple:rgba(124,63,176,.08);
+      --t-cyan:rgba(14,116,144,.08); --t-green:rgba(21,122,82,.10);
+      --t-amber:rgba(143,100,8,.10); --t-teal:rgba(47,111,116,.09);
+      --t-gray:rgba(92,102,117,.09); --t-badge:rgba(21,122,82,.18);
+    }
+    /* 深色背景分支：浅色文字、更亮的描边色 */
+    @media (prefers-color-scheme: dark){
+      svg.gf{
+        --fg:#e9eff9; --fg2:#bccadd; --fg3:#98a9bf;
+        --line:#6b7e98; --line2:#9aadc5;
+        --bg-soft:rgba(255,255,255,.055); --bg-head:rgba(255,255,255,.11);
+        --violet:#9d95f6; --blue:#7fa8f7; --indigo:#8f95f5; --purple:#c28cf0;
+        --cyan:#6ad0e8; --green:#41d69c; --amber:#f0b429; --teal:#7cc6cb;
+        --steel:#9db0cb; --gray:#a3adba;
+        --t-violet:rgba(157,149,246,.13); --t-blue:rgba(127,168,247,.12);
+        --t-indigo:rgba(143,149,245,.12); --t-purple:rgba(194,140,240,.12);
+        --t-cyan:rgba(106,208,232,.12); --t-green:rgba(65,214,156,.13);
+        --t-amber:rgba(240,180,41,.13); --t-teal:rgba(124,198,203,.12);
+        --t-gray:rgba(163,173,186,.12); --t-badge:rgba(65,214,156,.22);
+      }
+    }
+
+    text{ font-family:'Segoe UI','Microsoft YaHei','PingFang SC','Noto Sans CJK SC',sans-serif; }
+    .t1{ fill:var(--fg); }
+    .t2{ fill:var(--fg2); }
+    .t3{ fill:var(--fg3); }
+    .c-violet{ fill:var(--violet); }
+    .c-blue{ fill:var(--blue); }
+    .c-indigo{ fill:var(--indigo); }
+    .c-purple{ fill:var(--purple); }
+    .c-cyan{ fill:var(--cyan); }
+    .c-green{ fill:var(--green); }
+    .c-amber{ fill:var(--amber); }
+    .c-teal{ fill:var(--teal); }
+    .c-steel{ fill:var(--steel); }
+    .c-gray{ fill:var(--gray); }
+
+    .frame{ fill:none; stroke:var(--line); stroke-width:1.1; stroke-opacity:.55; }
+    .box{ fill:var(--bg-soft); stroke:var(--line); stroke-width:1.8; }
+    .sw2{ stroke-width:2.2; }
+    .box-steel{ fill:var(--bg-soft); stroke:var(--steel); }
+    .box-violet{ fill:var(--t-violet); stroke:var(--violet); }
+    .box-blue{ fill:var(--t-blue); stroke:var(--blue); }
+    .box-indigo{ fill:var(--t-indigo); stroke:var(--indigo); }
+    .box-purple{ fill:var(--t-purple); stroke:var(--purple); }
+    .box-cyan{ fill:var(--t-cyan); stroke:var(--cyan); }
+    .box-green{ fill:var(--t-green); stroke:var(--green); }
+    .box-amber{ fill:var(--bg-soft); stroke:var(--amber); }
+    .box-teal{ fill:var(--t-teal); stroke:var(--teal); }
+    .box-gray{ fill:var(--t-gray); stroke:var(--gray); stroke-dasharray:5 4; }
+    .panel-amber{ fill:var(--t-amber); stroke:var(--amber); stroke-width:1.6; stroke-dasharray:8 5; }
+    .badge{ fill:var(--bg-head); stroke:var(--line2); stroke-width:1.2; }
+    .badge-violet{ fill:var(--t-violet); stroke:var(--violet); }
+    .badge-blue{ fill:var(--t-blue); stroke:var(--blue); }
+    .badge-green{ fill:var(--t-green); stroke:var(--green); }
+    .pill-green{ fill:var(--t-badge); stroke:var(--green); stroke-width:1; }
+
+    .ln{ fill:none; stroke-width:1.8; }
+    .ln-steel{ stroke:var(--steel); }
+    .ln-violet{ stroke:var(--violet); }
+    .ln-blue{ stroke:var(--blue); }
+    .ln-green{ stroke:var(--green); }
+    .ln-amber{ stroke:var(--amber); }
+    .ln-teal{ stroke:var(--teal); }
+    .ln-gray{ stroke:var(--gray); }
+    .dash{ stroke-dasharray:6 4; }
+
+    .mk-steel{ fill:var(--steel); }
+    .mk-violet{ fill:var(--violet); }
+    .mk-blue{ fill:var(--blue); }
+    .mk-green{ fill:var(--green); }
+    .mk-amber{ fill:var(--amber); }
+    .mk-teal{ fill:var(--teal); }
+    .mk-gray{ fill:var(--gray); }
+  </style>
+
+  <defs>
+    <marker id="m-steel" viewBox="0 0 10 10" refX="10" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+      <path d="M0,0 L10,5 L0,10 Z" class="mk-steel"/>
+    </marker>
+    <marker id="m-violet" viewBox="0 0 10 10" refX="10" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+      <path d="M0,0 L10,5 L0,10 Z" class="mk-violet"/>
+    </marker>
+    <marker id="m-blue" viewBox="0 0 10 10" refX="10" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+      <path d="M0,0 L10,5 L0,10 Z" class="mk-blue"/>
+    </marker>
+    <marker id="m-green" viewBox="0 0 10 10" refX="10" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+      <path d="M0,0 L10,5 L0,10 Z" class="mk-green"/>
+    </marker>
+    <marker id="m-amber" viewBox="0 0 10 10" refX="10" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+      <path d="M0,0 L10,5 L0,10 Z" class="mk-amber"/>
+    </marker>
+    <marker id="m-teal" viewBox="0 0 10 10" refX="10" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+      <path d="M0,0 L10,5 L0,10 Z" class="mk-teal"/>
+    </marker>
+    <marker id="m-gray" viewBox="0 0 10 10" refX="10" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+      <path d="M0,0 L10,5 L0,10 Z" class="mk-gray"/>
+    </marker>
+  </defs>
+
+  <!-- 外框：只有描边，背景完全透明 -->
+  <rect x="8" y="8" width="964" height="764" rx="14" class="frame"/>
+
+  <!-- 页眉 -->
+  <text x="22" y="32" font-size="17" font-weight="700" class="t1">dsh-depth-tool-gate</text>
+  <text x="22" y="50" font-size="10.5" class="t2">子代理创建那一刻，闸门做了什么</text>
+  <text x="950" y="32" text-anchor="end" font-size="10.5" class="t2">宿主侧插件 · agent/created 监听器</text>
+
+  <!-- 输入事件 -->
+  <rect x="12" y="58" width="196" height="58" rx="10" class="box box-steel"/>
+  <text x="110" y="84" text-anchor="middle" font-size="13" font-weight="700" class="t1">agent/created 事件</text>
+  <text x="110" y="102" text-anchor="middle" font-size="9.5" class="t2">宿主在派生子代理时触发</text>
+  <path d="M212,87 H248" class="ln ln-steel" marker-end="url(#m-steel)"/>
+
+  <!-- 第 1 步：算出有效禁用集合 -->
+  <rect x="252" y="58" width="390" height="72" rx="10" class="box box-steel sw2"/>
+  <circle cx="274" cy="78" r="10" class="badge"/>
+  <text x="274" y="82" text-anchor="middle" font-size="11" font-weight="700" class="t1">1</text>
+  <text x="462" y="88" text-anchor="middle" font-size="14.5" font-weight="700" class="t1">算出有效禁用集合</text>
+  <text x="462" y="108" text-anchor="middle" font-size="10" class="t2">按作用域合成</text>
+
+  <!-- 六张策略名单 -->
+  <rect x="12" y="150" width="214" height="312" rx="10" class="box box-violet"/>
+  <text x="26" y="174" font-size="12.5" font-weight="700" class="c-violet">六张策略名单</text>
+  <rect x="26" y="180" width="70" height="2" rx="1" class="c-violet"/>
+
+  <rect x="22" y="203" width="12" height="12" rx="3" class="c-violet"/>
+  <text x="40" y="212" font-size="9.5" font-weight="700" class="t1">baseline_deny</text>
+  <text x="40" y="227" font-size="8.5" class="t3">所有子代理的地板</text>
+
+  <rect x="22" y="247" width="12" height="12" rx="3" class="c-purple"/>
+  <text x="40" y="256" font-size="9.5" font-weight="700" class="t1">preset_extra_deny[岗位]</text>
+  <text x="40" y="271" font-size="8.5" class="t3">某岗位额外禁用</text>
+
+  <rect x="22" y="291" width="12" height="12" rx="3" class="c-cyan"/>
+  <text x="40" y="300" font-size="9.5" font-weight="700" class="t1">preset_allow[岗位]</text>
+  <text x="40" y="315" font-size="8.5" class="t3">某岗位豁免</text>
+
+  <rect x="22" y="335" width="12" height="12" rx="3" class="c-indigo"/>
+  <text x="40" y="344" font-size="9.5" font-weight="700" class="t1">main_deny</text>
+  <text x="40" y="359" font-size="8.5" class="t3">仅主会话</text>
+
+  <rect x="22" y="379" width="12" height="12" rx="3" class="c-blue"/>
+  <text x="40" y="388" font-size="9.5" font-weight="700" class="t1">main_preset_extra_deny[preset]</text>
+  <text x="40" y="403" font-size="8.5" class="t3">主会话按 preset 额外禁用</text>
+
+  <rect x="22" y="423" width="12" height="12" rx="3" class="c-teal"/>
+  <text x="40" y="432" font-size="9.5" font-weight="700" class="t1">main_preset_allow[preset]</text>
+  <text x="40" y="447" font-size="8.5" class="t3">主会话按 preset 只留清单</text>
+
+  <!-- 策略名单 → 第 1 步 -->
+  <path d="M226,166 H242 V112 H248" class="ln ln-violet" marker-end="url(#m-violet)"/>
+  <text x="238" y="140" text-anchor="end" font-size="8.5" class="c-violet">读取</text>
+
+  <!-- 第 2 步：决策 -->
+  <path d="M447,134 V182" class="ln ln-steel" marker-end="url(#m-steel)"/>
+  <path d="M447,186 L607,258 L447,330 L287,258 Z" class="box box-steel sw2"/>
+  <circle cx="447" cy="214" r="9.5" class="badge"/>
+  <text x="447" y="218" text-anchor="middle" font-size="10.5" font-weight="700" class="t1">2</text>
+  <text x="447" y="252" text-anchor="middle" font-size="12" font-weight="700" class="t1">该 preset 挂了 role-briefs 吗？</text>
+  <text x="447" y="272" text-anchor="middle" font-size="9" class="t2">读取该 agent 的 preset 行</text>
+
+  <!-- 是：keep-only -->
+  <path d="M287,258 L352,344" class="ln ln-steel" marker-end="url(#m-steel)"/>
+  <text x="306" y="300" text-anchor="end" font-size="9.5" class="t2">是</text>
+  <rect x="252" y="348" width="200" height="96" rx="10" class="box box-violet"/>
+  <text x="352" y="374" text-anchor="middle" font-size="13" font-weight="700" class="t1">keep-only</text>
+  <text x="352" y="398" text-anchor="middle" font-size="8.5" class="t2">preset_allow 当作只留清单，</text>
+  <text x="352" y="414" text-anchor="middle" font-size="8.5" class="t2">面就等于该清单</text>
+  <text x="352" y="432" text-anchor="middle" font-size="8" class="t3">工具面 = 该清单</text>
+
+  <!-- 否：豁免 -->
+  <path d="M607,258 L582,344" class="ln ln-steel" marker-end="url(#m-steel)"/>
+  <text x="600" y="300" font-size="9.5" class="t2">否</text>
+  <rect x="482" y="348" width="200" height="96" rx="10" class="box box-blue"/>
+  <text x="582" y="374" text-anchor="middle" font-size="13" font-weight="700" class="t1">豁免</text>
+  <text x="582" y="398" text-anchor="middle" font-size="8.5" class="t2">baseline_deny + pending</text>
+  <text x="582" y="414" text-anchor="middle" font-size="8.5" class="t2">− preset_allow</text>
+  <text x="582" y="430" text-anchor="middle" font-size="8.5" class="t2">+ preset_extra_deny</text>
+
+  <!-- 第 3 步：三个并列动作 -->
+  <path d="M352,444 V462 H273 V476" class="ln ln-blue" marker-end="url(#m-blue)"/>
+  <path d="M582,444 V462 H623 V476" class="ln ln-green" marker-end="url(#m-green)"/>
+  <path d="M447,334 V344 H467 V476" class="ln ln-violet dash" marker-end="url(#m-violet)"/>
+  <text x="460" y="470" text-anchor="end" font-size="8.5" class="c-violet">同源 preset 行</text>
+
+  <rect x="196" y="482" width="154" height="86" rx="10" class="box box-blue"/>
+  <circle cx="212" cy="498" r="9" class="badge badge-blue"/>
+  <text x="212" y="502" text-anchor="middle" font-size="10" font-weight="700" class="t1">3</text>
+  <text x="273" y="504" text-anchor="middle" font-size="11.5" font-weight="700" class="t1">注入岗位引导</text>
+  <text x="273" y="526" text-anchor="middle" font-size="8.5" class="t2">_common.md + 岗位.md</text>
+  <text x="273" y="544" text-anchor="middle" font-size="8.5" class="t3">1.8–3.4 KB</text>
+
+  <rect x="371" y="482" width="154" height="86" rx="10" class="box box-violet"/>
+  <circle cx="387" cy="498" r="9" class="badge badge-violet"/>
+  <text x="387" y="502" text-anchor="middle" font-size="10" font-weight="700" class="t1">3</text>
+  <text x="448" y="504" text-anchor="middle" font-size="11.5" font-weight="700" class="t1">遮蔽提示死段</text>
+  <text x="448" y="526" text-anchor="middle" font-size="8.5" class="t2">没有的工具，</text>
+  <text x="448" y="544" text-anchor="middle" font-size="8.5" class="t2">其纪律段不再下发</text>
+
+  <rect x="546" y="482" width="154" height="86" rx="10" class="box box-green"/>
+  <circle cx="562" cy="498" r="9" class="badge badge-green"/>
+  <text x="562" y="502" text-anchor="middle" font-size="10" font-weight="700" class="t1">3</text>
+  <text x="623" y="504" text-anchor="middle" font-size="11.5" font-weight="700" class="t1">tools.restrict()</text>
+  <rect x="581" y="510" width="84" height="17" rx="6" class="pill-green"/>
+  <text x="623" y="522" text-anchor="middle" font-size="9" class="c-green">宿主 API</text>
+  <text x="623" y="548" text-anchor="middle" font-size="8.5" class="t2">施加到本 agent</text>
+
+  <!-- 第 4 步：裁剪后的工具面 -->
+  <path d="M273,568 V586" class="ln ln-blue" marker-end="url(#m-blue)"/>
+  <path d="M448,568 V586" class="ln ln-violet" marker-end="url(#m-violet)"/>
+  <path d="M623,568 V586" class="ln ln-green" marker-end="url(#m-green)"/>
+
+  <rect x="232" y="588" width="440" height="84" rx="10" class="box box-steel sw2"/>
+  <circle cx="254" cy="608" r="9.5" class="badge"/>
+  <text x="254" y="612" text-anchor="middle" font-size="10" font-weight="700" class="t1">4</text>
+  <text x="462" y="622" text-anchor="middle" font-size="13" font-weight="700" class="t1">agent 以裁剪后的工具面运行</text>
+  <text x="462" y="648" text-anchor="middle" font-size="9.5" class="t3">配置热读，只对之后创建的 agent 生效</text>
+
+  <!-- 台账 -->
+  <rect x="692" y="588" width="258" height="84" rx="10" class="box box-teal"/>
+  <text x="821" y="620" text-anchor="middle" font-size="13" font-weight="700" class="t1">audit.jsonl</text>
+  <text x="821" y="644" text-anchor="middle" font-size="9.5" class="t2">append-only 台账，每个决策一行</text>
+
+  <!-- 台账主干：第 1 步 → audit.jsonl -->
+  <path d="M646,94 H716 V584" class="ln ln-teal dash" marker-end="url(#m-teal)"/>
+  <text x="724" y="560" font-size="8.5" class="c-teal">每个决策都记一行</text>
+
+  <!-- 新工具闸门面板 -->
+  <rect x="736" y="146" width="214" height="384" rx="12" class="panel-amber"/>
+  <text x="748" y="174" font-size="12.5" font-weight="700" class="c-amber">新工具闸门</text>
+  <text x="748" y="190" font-size="9" class="t2">锁文件 · 三种状态</text>
+
+  <rect x="748" y="204" width="190" height="46" rx="10" class="box box-amber"/>
+  <text x="843" y="224" text-anchor="middle" font-size="11.5" font-weight="700" class="c-amber">新工具名出现</text>
+  <text x="843" y="240" text-anchor="middle" font-size="8.5" class="t2">运行时首次见到</text>
+  <path d="M843,250 V258" class="ln ln-amber" marker-end="url(#m-amber)"/>
+
+  <rect x="775" y="262" width="136" height="46" rx="10" class="box box-amber"/>
+  <text x="843" y="282" text-anchor="middle" font-size="12" font-weight="700" class="c-amber">pending 待裁决</text>
+  <text x="843" y="298" text-anchor="middle" font-size="8.5" class="t2">对子代理禁用</text>
+  <path d="M843,308 V316" class="ln ln-amber" marker-end="url(#m-amber)"/>
+
+  <rect x="765" y="320" width="156" height="46" rx="10" class="box box-amber"/>
+  <text x="843" y="340" text-anchor="middle" font-size="12" font-weight="700" class="c-amber">由你裁决</text>
+  <text x="843" y="356" text-anchor="middle" font-size="8.5" class="t2">面板：闸门与发现</text>
+  <path d="M814,366 L794,392" class="ln ln-amber" marker-end="url(#m-amber)"/>
+  <path d="M872,366 L888,392" class="ln ln-gray dash" marker-end="url(#m-gray)"/>
+
+  <rect x="746" y="398" width="96" height="58" rx="10" class="box box-green"/>
+  <text x="794" y="420" text-anchor="middle" font-size="11" font-weight="700" class="c-green">seen 已裁决</text>
+  <text x="794" y="436" text-anchor="middle" font-size="8.5" class="t2">已经裁决过</text>
+
+  <rect x="850" y="398" width="92" height="58" rx="10" class="box box-gray"/>
+  <text x="896" y="416" text-anchor="middle" font-size="11" font-weight="700" class="c-gray">forced</text>
+  <text x="896" y="430" text-anchor="middle" font-size="8" class="c-gray">preset 已注册，</text>
+  <text x="896" y="442" text-anchor="middle" font-size="8" class="c-gray">restrict 触达不到</text>
+
+  <text x="748" y="478" font-size="8.5" class="c-amber">pending 名称并入禁用集合</text>
+  <text x="748" y="494" font-size="8.5" class="c-amber">陈旧条目从不清除</text>
+  <text x="748" y="510" font-size="8" class="c-amber">锁文件：depth-tool-gate.lock.json</text>
+
+  <!-- pending 回灌第 1 步 -->
+  <path d="M736,168 V42 H447 V54" class="ln ln-amber dash" marker-end="url(#m-amber)"/>
+  <text x="600" y="34" text-anchor="middle" font-size="9.5" class="c-amber">pending 并入禁用集合</text>
+
+  <!-- 补充注记 -->
+  <text x="232" y="692" font-size="8.5" class="t3">keep-only 分支同样落到 tools.restrict()——传的是只留清单，不是禁用清单</text>
+
+  <!-- 图例 -->
+  <rect x="22" y="698" width="12" height="12" rx="3" class="c-violet"/>
+  <text x="40" y="709" font-size="9.5" class="t2">策略名单</text>
+  <rect x="96" y="698" width="12" height="12" rx="3" class="c-green"/>
+  <text x="114" y="709" font-size="9.5" class="t2">宿主 API</text>
+  <rect x="170" y="698" width="12" height="12" rx="3" class="c-amber"/>
+  <text x="188" y="709" font-size="9.5" class="t2">新工具闸门</text>
+  <rect x="263" y="698" width="12" height="12" rx="3" class="c-teal"/>
+  <text x="281" y="709" font-size="9.5" class="t2">台账</text>
+  <rect x="318" y="698" width="12" height="12" rx="3" class="c-steel"/>
+  <text x="336" y="709" font-size="9.5" class="t2">决策分支</text>
+
+  <text x="22" y="744" font-size="9.5" class="t3">闸门是 fail-open：闸门出错不阻断会话，只记台账</text>
+</svg>

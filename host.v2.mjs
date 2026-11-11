@@ -67,6 +67,9 @@ import { randomUUID } from "node:crypto";
  * 方案), 发布态由宿主 loader 的 profile scope 解析。 */
 import { TypertRemoteService as __TypertRemoteService } from "@deepseek-ai/dsh-typert-protocol";
 import { createScope } from "@deepseek-ai/dsh-scope";
+/* 回执渲染与测试共用一份真代码(见 composed-render.mjs 顶部说明: 旧形态的"同构副本"
+ * 会漂移 —— 改 host 不改副本, 测试全绿而真 render 已坏)。 */
+import { renderComposed } from "./composed-render.mjs";
 
 /* tools = 全局单例服务(在插件根取一次): restrict/view 在**服务**上, 作用域由
  * createScope(agent.ctx, agent) 构造; agent.ctx.get("tools") 可能撞 scope 隔离
@@ -154,8 +157,19 @@ const NAME = "dsh-depth-tool-gate";
 const FORCED_NAMES = new Set(["subagent", "subagent_fork"]);
 
 /* [v0.4.2] dispatch_composed: reserved childId → allow 名单中转仓。
- * TTL = spawn→agent/created 正常时延(<5s)加裕量; 残留(spawn 失败/abort)由清扫回收。 */
-const PENDING_CAPS = new Map();  /* childId → {allow:Set<string>, label, expires} */
+ * TTL = spawn→agent/created 正常时延(<5s)加裕量; 残留(spawn 失败/abort)由清扫回收。
+ *
+ * [v0.13.2] 预挂**改为持久**: 认领后不再删除, 由 TTL 清扫兜底。
+ *   起因(台账实测坐实): 子代跑完后再用 send_message 续派 → 宿主 coldResume
+ *   冷恢复 → 重新物化 agent → agent/created 再次触发。但预挂在首次创建时
+ *   已被消费删除 → 认领失败 → 落回普通 deny 名单裁剪 → **工具面完全变了**
+ *   (实测同一 agentId 的面从 109 掉到 5) → KV 前缀失效、工具用不了。
+ *   持久后: 续派/冷恢复命中同一份 allow 名单 → 面稳定不变。
+ *   清理: capSweeper 的 TTL 清扫(不在认领点删)。
+ *   defs: 派发时快照的主会话定义(补挂源), 使子代理面与主会话实时面解耦 ——
+ *   否则主会话面一变(改 main_deny / pending 进件 / 新工具出现), 补挂就补不上,
+ *   子代理面跟着漂移(实测同标签 literature-lead 的面在 23 与 25 之间跳)。 */
+const PENDING_CAPS = new Map();  /* childId → {allow:Set<string>, label, expires, defs?:Map, used:number} */
 const CAP_TTL_MS = 60_000;
 
 /* [v0.4.2] 能力标签表缺省(config.capabilities 存在则整体覆盖): 标签→allow 名单。
@@ -420,6 +434,69 @@ function gateMain(agent) {
 	}
 }
 
+/* [v0.13.2] 派发时快照主会话的工具定义(补挂源)。
+ * 为什么在派发侧抓而不是在子代创建时读实时面:
+ *   子代创建时读主会话实时面 → 主会话面一变(改 main_deny / pending 进件 /
+ *   新工具出现), 补挂就补不上 → 子代理面跟着漂移(实测同标签 literature-lead
+ *   的面在 23 与 25 之间跳)。快照后, 已派出的子代理(含续派/冷恢复)都用这份
+ *   快照补挂 → 面稳定不变, 与主会话此后怎么变无关。
+ *
+ * 取法与 gateMain/gateComposed 一致: 借父 agent 的 ctx 建一个临时 scope 拿
+ * tools 句柄, 再在 agents.list() 里挑 depth0 中 visible 最大者(真实主会话)。
+ * 失败不阻断派发 —— gateComposed 会回落到实时面。
+ *
+ * @param {object} parent 派发的父 agent
+ * @param {Array<Set<string>>} allowLists 各子代理的 allow 名单(取并集抓定义)
+ * @returns {Map<string, object>|null} 工具名 → 定义
+ */
+function captureMainToolDefs(parent, allowLists) {
+	try {
+		const names = new Set();
+		for (const s of allowLists) for (const n of s) names.add(n);
+		if (!names.size) return null;
+		const parentCtx = parent?.ctx;
+		if (!parentCtx || typeof parentCtx.extend !== "function") return null;
+		const scoped = createScope(parentCtx, parent);
+		try {
+			const sctx = scoped.ctx;
+			/* sctx 可能是裁剪过的 scope, 不保证有 get —— 缺了就退回父 ctx / ROOT_CTX */
+			const sGet = (n) => {
+				if (typeof sctx?.get === "function") { try { return sctx.get(n); } catch { /* fallthrough */ } }
+				try { return parentCtx.get?.(n); } catch { /* fallthrough */ }
+				return ROOT_CTX?.get?.(n);
+			};
+			const tools = sGet("tools");
+			if (!tools || typeof tools.view !== "function") return null;
+			/* 真实主会话 = depth0 里 visible 最大者(重启恢复期常有多个 depth0) */
+			let mainAgent = null, bestSize = -1;
+			const agents = sGet("agents");
+			if (agents?.list) {
+				for (const a of agents.list()) {
+					if ((a?.session?.header?.delegationDepth ?? 1) !== 0) continue;
+					let size = -1;
+					try { size = tools.view(a).visible.size; } catch { continue; }
+					if (size > bestSize) { mainAgent = a; bestSize = size; }
+				}
+			}
+			/* 拿不到主会话则用父自己的面兜底(父也是 depth0 通常) */
+			const viewSrc = mainAgent ? tools.view(mainAgent) : tools.view(parent);
+			const defs = new Map();
+			for (const n of names) {
+				try {
+					const def = viewSrc?.visible?.get(n) || viewSrc?.registrations?.get(n)?.definition;
+					if (def) defs.set(n, def);
+				} catch { /* 单个名字失败不影响其余 */ }
+			}
+			return defs.size ? defs : null;
+		} finally {
+			try { scoped.dispose?.(); } catch { /* noop */ }
+		}
+	} catch (e) {
+		warn(`composed 快照采集失败(退回实时面): ${String((e && e.message) || e)}`);
+		return null;
+	}
+}
+
 /* ── composed 子代裁剪: allow(keep-only)+补挂双轨 ──────────────────────
  * 宿主 API 语义(源码核实):
  *   ① restrict({allow}) 只作用继承层(全局+祖先层); own 层(子代自注册=preset 行/
@@ -472,20 +549,27 @@ function gateComposed(agent, cap, depth) {
 		const dropped = cap.allow.size - allowList.length;
 		/* ① 裁继承层: keep-only(allowList 允许为空=裁光全局层, 面全靠补挂) */
 		tools.restrict({ allow: allowList });
-		/* ② 补挂: 不在可裁集的目标名(preset 行工具), 从主会话 view 取定义注册到
-		 * 子代 own 层(豁免 restrictions, 直接 visible)。 */
+		/* ② 补挂: 不在可裁集的目标名(preset 行工具), 从**派发时快照的定义**注册到
+		 * 子代 own 层(豁免 restrictions, 直接 visible)。
+		 * [v0.13.2] 优先用快照(cap.defs): 派发时抓一次主会话的定义, 之后子代理面
+		 * 与主会话实时面解耦 —— 续派/并行时主会话面变了也不影响子代理面
+		 * (旧形态取实时主会话面 → 同标签的子代理面在 23 与 25 之间漂移)。
+		 * 快照缺失时回落实时主会话面(兼容旧预挂记录)。 */
 		const supplemented = [];
 		let mainView = null;
 		if (mainAgent) { try { mainView = tools.view(mainAgent); } catch (e) { warn(`主会话 view 失败: ${String((e && e.message) || e)}`); } }
+		const snap = cap.defs instanceof Map ? cap.defs : null;
+		let fromSnap = 0, fromLive = 0;
 		for (const name of cap.allow) {
 			if (known.has(name)) continue; /* 已在可裁集, restrict 已保留 */
 			try {
-				const def = mainView?.visible?.get(name) || mainView?.registrations?.get(name)?.definition;
+				const def = (snap && snap.get(name)) || mainView?.visible?.get(name) || mainView?.registrations?.get(name)?.definition;
 				if (def) {
 					tools.register(def); /* 注册到子代 own 层(scopeOf(sctx)=agent) */
 					supplemented.push(name);
+					if (snap && snap.has(name)) fromSnap++; else fromLive++;
 				} else {
-					warn(`composed 补挂无定义(${name}): 主会话面也没有 —— 弃(面外)`);
+					warn(`composed 补挂无定义(${name}): 快照与主会话面都没有 —— 弃(面外)`);
 				}
 			} catch (e) {
 				warn(`composed 补挂失败(${name}): ${String((e && e.message) || e)}`);
@@ -498,6 +582,8 @@ function gateComposed(agent, cap, depth) {
 			preset: `(composed:${cap.label})`, allowed: allowList.length,
 			droppedUnknown: dropped, visibleAfter, knownCount: known.size,
 			supplemented: supplemented.length, supplementedNames: supplemented,
+			/* [v0.13.2] 补挂来源与认领次数: 快照优先(面稳定), used>1 = 该子代理被续派过 */
+			supplementedFromSnapshot: fromSnap, supplementedFromLive: fromLive, claimCount: cap.used || 1,
 		};
 		audit(rec);
 		log(`composed 裁剪: ${agent.id.slice(0, 24)} 面标签=${cap.label} allow=${allowList.length}/${known.size}(可裁)+补挂${supplemented.length} 面=${rec.visibleAfter}${dropped ? ` 丢弃未知=${dropped}` : ""}`);
@@ -518,7 +604,11 @@ function gateAgent(agent) {
 		const cap = PENDING_CAPS.get(agent?.id);
 		log(`[composed-debug] agent.id=${agent?.id} PENDING_CAPS.size=${PENDING_CAPS.size} keys=${[...PENDING_CAPS.keys()].map(k=>k.slice(0,12)).join(",")} hit=${!!cap}`);
 		if (cap) {
-			PENDING_CAPS.delete(agent.id);
+			/* [v0.13.2] 认领后**不删除**预挂: 续派/冷恢复会重新物化 agent 并再次
+			 * 触发 agent/created, 命中同一份 allow 名单 → 工具面保持不变。
+			 * 旧形态在这里 delete, 于是续派时认领失败 → 落回普通 deny 裁剪 →
+			 * 面完全变了(实测 109 → 5)。清理交给 TTL 清扫。 */
+			cap.used = (cap.used || 0) + 1;
 			const r = gateComposed(agent, cap, depth);
 			if (!r?.error && !r?.skipped) return r; /* 失败/缺件 → 落回下文常规 deny 裁剪兜底 */
 		} /* [v0.4.2] dispatch_composed 预挂子代 */
@@ -976,57 +1066,44 @@ USAGE_TOTAL.set(name, (USAGE_TOTAL.get(name) || 0) + 1);
 		try {
 			const reg = ctx.tools.register({
 				name: "dispatch_composed",
-				description: "按能力标签组装临时工具面并派生子代理执行任务(动态 preset)。capabilities 从配置标签表取(内置标签: literature=文献检索面/reader=轻读面/reader-lead=轻读面且可再派一级/literature-lead=文献检索面且可再派一级/ocr=图文提取面; 标签表可由 config.capabilities 整体覆盖, 以实际可用标签为准, 未知标签会直接报错并列出可用项); tools 直传显式工具名(与标签并集, 打补丁式追加)。子代理出生时只保留 allow 名单内工具, 面外一切不可见(含未来新工具)。适用于: 任务只需要一小片工具面、且没有现成细粒度 preset 的场景; 有现成 preset 时优先 preset 派单。等待子代理完成并返回其最终回复文本。",
+				description: "按能力标签组装临时工具面并派生子代理执行任务(动态 preset)。capabilities 从配置标签表取(内置标签: literature=文献检索面/reader=轻读面/reader-lead=轻读面且可再派一级/literature-lead=文献检索面且可再派一级/ocr=图文提取面; 标签表可由 config.capabilities 整体覆盖, 以实际可用标签为准, 未知标签会直接报错并列出可用项); tools 直传显式工具名(与标签并集, 打补丁式追加)。子代理出生时只保留 allow 名单内工具, 面外一切不可见(含未来新工具)。适用于: 任务只需要一小片工具面、且没有现成细粒度 preset 的场景; 有现成 preset 时优先 preset 派单。\n并行派单: 传 tasks[] 数组(每项含自己的 prompt 与可选 capabilities/tools/description), 一次派出多个独立子代理 —— 各自工具面互不影响、互不等待, 同一轮里可并行跑多件任务; 顶层 prompt/capabilities/tools 作为各任务的默认值。单任务时用顶层 prompt。\n异步语义(默认): 本工具**立即返回**各子代理 id, 不等它们跑完; 各子代理完成时, 结果由宿主作为一条消息投递给本会话(与原生 subagent 工具同范式)。若需要当场拿到结果再继续, 传 wait=true(会等到全部完成, 期间本工具阻塞)。",
 				timeoutMs: undefined,
 				parameters: {
 					type: "object",
 					properties: {
-						prompt: { type: "string", description: "派给子代理的完整自包含任务全文" },
+						prompt: { type: "string", description: "派给子代理的完整自包含任务全文(单个任务时用)" },
 						capabilities: { type: "array", items: { type: "string" }, description: "能力标签列表(可组合, 取并集; 与 tools 至少给其一)" },
 						tools: { type: "array", items: { type: "string" }, description: "显式工具名直传(与能力标签并集; 名字须运行时可补挂, 未知名在补挂阶段丢弃并日志警示)" },
 						description: { type: "string", description: "短标签(展示用, 如 '文献速查×3')" },
+						tasks: {
+							type: "array",
+							description: "批量并行派单: 每项一个独立子代理(各自的 prompt/能力面), 一次发出、互不等待、互不影响。用于把多件同类任务并行交给子代理。",
+							items: {
+								type: "object",
+								properties: {
+									prompt: { type: "string", description: "该子代理的完整自包含任务全文" },
+									capabilities: { type: "array", items: { type: "string" }, description: "该子代理的能力标签(不填则用顶层 capabilities)" },
+									tools: { type: "array", items: { type: "string" }, description: "该子代理的直传工具名(不填则用顶层 tools)" },
+									description: { type: "string", description: "该子代理的短标签" },
+								},
+								required: ["prompt"],
+							},
+						},
+						wait: { type: "boolean", description: "批量派单后是否等待全部完成再返回(默认 false = 立即返回各子代理 id, 完成结果由宿主异步投递给本会话)" },
 					},
-					required: ["prompt"],
+					required: [],
 				},
 				output: {
 					schema: { type: "object", additionalProperties: true },
-					render: (_a, value) => {
-						try {
-							const v = typeof value === "string" ? JSON.parse(value) : value;
-							const head = `[dispatch_composed ${v?.ok ? "✓" : "✗"}] 面=${(v?.capabilities || []).join("+") || "custom"}${v?.toolsExtra ? `+直传${v.toolsExtra}件` : ""} allow=${v?.allowed ?? "-"}${v?.droppedUnknown ? ` 丢弃未知=${v.droppedUnknown}` : ""}`;
-							if (v?.error) return [{ type: "text", text: head + "\n错误: " + v.error }];
-							const full = String(v?.reply || "");
-							const CAP = 65536;
-							if (full.length <= CAP) return [{ type: "text", text: head + "\n" + full }];
-							/* 超长兜底: 全文落盘, 回执带路径(信息能力不因截断丢失) */
-							let spill = "";
-							try {
-								const dir = join(DSH_HOME, "logs", "dsh-depth-tool-gate", "spill");
-								mkdirSync(dir, { recursive: true });
-								const file = join(dir, `composed-reply-${Date.now()}.md`);
-								writeFileSync(file, full, "utf8");
-								spill = `\n[全文 ${full.length} 字符超回执上限 ${CAP}, 已完整落盘: ${file}]`;
-							} catch { spill = `\n[全文 ${full.length} 字符超回执上限 ${CAP}, 落盘失败——用 tool_result_index/read_tool_result 按 callId 读回完整原文]`; }
-							return [{ type: "text", text: head + spill + "\n" + full.slice(0, CAP) }];
-						} catch (e) { return [{ type: "text", text: "[dispatch_composed] render 失败: " + String(e) }]; }
-					},
+					/* 渲染实现提到 composed-render.mjs —— host 与测试共用同一份真代码,
+					 * 不再维护"同构副本"(旧形态实测会漂移: 改 host 不改副本 → 测试假绿)。 */
+					render: (_a, value) => renderComposed(value, { dshHome: DSH_HOME }),
 				},
 				async execute(args, exec) {
 					try {
 						const cfg = readConfig();
 						if (cfg && cfg.enabled === false) return { ok: false, error: "dsh-depth-tool-gate 已禁用" };
 						const capsTable = (cfg?.capabilities && typeof cfg.capabilities === "object" && Object.keys(cfg.capabilities).length) ? cfg.capabilities : DEFAULT_CAPABILITIES;
-						const tags = Array.isArray(args?.capabilities) ? args.capabilities.map(String).filter(Boolean) : [];
-						const extraTools = Array.isArray(args?.tools) ? args.tools.map(String).filter(Boolean) : [];
-						if (!tags.length && !extraTools.length) return { ok: false, error: "capabilities 与 tools 至少给其一" };
-						const allow = new Set();
-						for (const t of tags) {
-							const list = capsTable[t];
-							if (!Array.isArray(list)) return { ok: false, error: `未知能力标签: ${t}。可用: ${Object.keys(capsTable).join(", ")}` };
-							for (const n of list) allow.add(n);
-						}
-						for (const n of extraTools) allow.add(n);
-						if (typeof args?.prompt !== "string" || !args.prompt.trim()) return { ok: false, error: "prompt 为空" };
 						let subagents = null;
 						try { subagents = ctx.get("subagents"); } catch { subagents = null; }
 						if (!subagents || typeof subagents.startActivation !== "function") {
@@ -1035,52 +1112,130 @@ USAGE_TOTAL.set(name, (USAGE_TOTAL.get(name) || 0) + 1);
 						if (!subagents || typeof subagents.startActivation !== "function") return { ok: false, error: "subagents 服务不可用(spawn 通道未挂载?)" };
 						const parent = exec?.agent;
 						if (!parent) return { ok: false, error: "exec.agent 不可用(无法定父)" };
-						/* reserved childId: 于此预挂 → agent/created 时 gateComposed 按 agent.id 认领 */
-						const childId = "dc-" + randomUUID();
-						const label = String(args?.description || (tags.length ? tags.join("+") : `custom-${extraTools.length}件`)).slice(0, 48);
-						PENDING_CAPS.set(childId, { allow, label, expires: Date.now() + CAP_TTL_MS });
-						let run;
-						try {
-							run = await subagents.startActivation({
-								provider: "spawn",
-								childId,
-								label: `composed:${label}`,
-								delivery: "caller",
-								signal: new AbortController().signal,
-								request: {
-									prompt: [{ type: "text", text: args.prompt }],
-									parent,
-									/* 关键(v0.4.6): 绑空壳 dtg-shell(零工具行)——preset 工具行注册到子代 own 层,
-									 * own 层不在 restrictableNames(dsh-tools view :497-505), 绑 cordis-sub
-									 * 则其 tool 行永远裁不掉(面不精确); 空壳面=全局层×allow+补挂(精确),
-									 * web/read 等定义经 gateComposed 从主会话 view 补挂。 */
-									agentPreset: "dtg-shell",
-									/* R1 缓解: allow 够不着 preset-scoped 名(subagent 系继承自父面),
-									 * maxDepth 钉死到子代自身 depth → 意外级联被总闸拒。 */
-									maxDepth: ((parent?.session?.header?.delegationDepth ?? 0) + 1) + (allow.has("dispatch_composed") ? 1 : 0), /* v0.4.7: lead 面含 dispatch_composed 时+1 级联预算(总闸12仍管) */
-								},
+
+						/* 任务清单: 批量(tasks[]) 或单任务(顶层 prompt/capabilities/tools)。
+						 * 每项一个独立子代理 = 独立工具面 = 互不影响 = 可并行。 */
+						const rawTasks = Array.isArray(args?.tasks) ? args.tasks : [];
+						const specs = rawTasks.length
+							? rawTasks.map((t, i) => ({
+								prompt: String(t?.prompt ?? ""),
+								tags: Array.isArray(t?.capabilities) ? t.capabilities.map(String).filter(Boolean)
+									: (Array.isArray(args?.capabilities) ? args.capabilities.map(String).filter(Boolean) : []),
+								extraTools: Array.isArray(t?.tools) ? t.tools.map(String).filter(Boolean)
+									: (Array.isArray(args?.tools) ? args.tools.map(String).filter(Boolean) : []),
+								label: String(t?.description || `任务${i + 1}`).slice(0, 48),
+							}))
+							: [{
+								prompt: String(args?.prompt ?? ""),
+								tags: Array.isArray(args?.capabilities) ? args.capabilities.map(String).filter(Boolean) : [],
+								extraTools: Array.isArray(args?.tools) ? args.tools.map(String).filter(Boolean) : [],
+								label: String(args?.description || "").slice(0, 48),
+							}];
+
+						/* 逐项算 allow 集(标签未知 → 硬失败, 整批不派) */
+						const plans = [];
+						for (const sp of specs) {
+							if (!sp.tags.length && !sp.extraTools.length) return { ok: false, error: "capabilities 与 tools 至少给其一" };
+							const allow = new Set();
+							for (const t of sp.tags) {
+								const list = capsTable[t];
+								if (!Array.isArray(list)) return { ok: false, error: `未知能力标签: ${t}。可用: ${Object.keys(capsTable).join(", ")}` };
+								for (const n of list) allow.add(n);
+							}
+							for (const n of sp.extraTools) allow.add(n);
+							if (!sp.prompt.trim()) return { ok: false, error: "prompt 为空" };
+							plans.push({ ...sp, allow });
+						}
+
+						/* 逐项 spawn —— 各自独立预挂与独立面, 不互相等待。 */
+						/* [v0.13.2] 派发时**快照**主会话的工具定义(补挂源):
+						 * 旧形态在子代创建时读主会话**实时**面 → 主会话面一变(改 main_deny /
+						 * pending 进件 / 新工具出现), 补挂就补不上 → 子代理面跟着漂移
+						 * (台账实测同标签 literature-lead 的面在 23 与 25 之间跳)。
+						 * 快照后: 已派出的子代理(含续派/冷恢复)都用这份快照补挂 → 面稳定。
+						 * 快照失败不阻断派发(gateComposed 会回落实时面)。 */
+						const snapDefs = captureMainToolDefs(parent, plans.map((p) => p.allow));
+						const spawned = [];
+						for (const plan of plans) {
+							const childId = "dc-" + randomUUID();
+							const label = String(plan.label || (plan.tags.length ? plan.tags.join("+") : `custom-${plan.extraTools.length}件`)).slice(0, 48);
+							PENDING_CAPS.set(childId, { allow: plan.allow, label, expires: Date.now() + CAP_TTL_MS, defs: snapDefs, used: 0 });
+							let run;
+							try {
+								run = await subagents.startActivation({
+									provider: "spawn",
+									childId,
+									label: `composed:${label}`,
+									/* [v0.13.2] delivery 改 "parent": 结果由宿主异步投递给本会话(与原生
+									 * subagent 工具同范式 —— 它也是 "immediately returns its id, the
+									 * runtime notifies you when it finishes"), 不再占用调用者等待
+									 * → 同一轮里可连发多个子代理并行跑。原 "caller" 语义是
+									 * "caller delivery only returns the result" → 必须 await 到结束,
+									 * 串行的根因就在这里。 */
+									delivery: "parent",
+									signal: new AbortController().signal,
+									request: {
+										prompt: [{ type: "text", text: plan.prompt }],
+										parent,
+										/* 关键(v0.4.6): 绑空壳 dtg-shell(零工具行)——preset 工具行注册到子代 own 层,
+										 * own 层不在 restrictableNames(dsh-tools view :497-505), 绑 cordis-sub
+										 * 则其 tool 行永远裁不掉(面不精确); 空壳面=全局层×allow+补挂(精确),
+										 * web/read 等定义经 gateComposed 从主会话 view 补挂。 */
+										agentPreset: "dtg-shell",
+										/* R1 缓解: allow 够不着 preset-scoped 名(subagent 系继承自父面),
+										 * maxDepth 钉死到子代自身 depth → 意外级联被总闸拒。 */
+										maxDepth: ((parent?.session?.header?.delegationDepth ?? 0) + 1) + (plan.allow.has("dispatch_composed") ? 1 : 0), /* v0.4.7: lead 面含 dispatch_composed 时+1 级联预算(总闸12仍管) */
+									},
+								});
+							} catch (e) {
+								PENDING_CAPS.delete(childId);
+								spawned.push({ ok: false, label, error: "spawn 失败: " + String((e && e.message) || e) });
+								continue;
+							}
+							if (run?.childId && run.childId !== childId) {
+								/* reserved childId 未被采纳(后端语义漂移) → 迁移预挂并警示 */
+								warn(`reserved childId 未采纳(=${String(run.childId).slice(0, 24)}), 迁移预挂`);
+								const moved = PENDING_CAPS.get(childId); PENDING_CAPS.delete(childId);
+								if (moved) PENDING_CAPS.set(run.childId, moved);
+							}
+							spawned.push({
+								ok: true, childId: run?.childId || childId, label,
+								capabilities: plan.tags, toolsExtra: plan.extraTools.length, allowed: plan.allow.size,
+								run,
 							});
-						} catch (e) {
-							PENDING_CAPS.delete(childId);
-							return { ok: false, error: "spawn 失败: " + String((e && e.message) || e) };
 						}
-						if (run?.childId && run.childId !== childId) {
-							/* reserved childId 未被采纳(后端语义漂移) → 迁移预挂并警示 */
-							warn(`reserved childId 未采纳(=${String(run.childId).slice(0, 24)}), 迁移预挂`);
-							const moved = PENDING_CAPS.get(childId); PENDING_CAPS.delete(childId);
-							if (moved) PENDING_CAPS.set(run.childId, moved);
-						}
-						try {
-							const result = await run.result;
-							const reply = Array.isArray(result?.output)
-								? result.output.filter((b) => b?.type === "text").map((b) => b.text).join("")
-								: "";
+
+						const failed = spawned.filter((s) => !s.ok);
+						const live = spawned.filter((s) => s.ok);
+						/* 批量: 默认立即返回(并行), wait=true 才等全部完成 */
+						const wantWait = args?.wait === true || (specs.length === 1 && args?.wait === true);
+						if (wantWait && live.length) {
+							const outs = [];
+							for (const s of live) {
+								try {
+									const result = await s.run.result;
+									const reply = Array.isArray(result?.output)
+										? result.output.filter((b) => b?.type === "text").map((b) => b.text).join("")
+										: "";
+									outs.push({ ...s, stopReason: result?.stopReason, reply: reply || "(子代理无文本输出)", run: undefined });
+								} catch (e) {
+									outs.push({ ...s, ok: false, error: String((e && e.message) || e), run: undefined });
+								} finally { try { await s.run?.dispose?.(); } catch { /* noop */ } }
+							}
 							return {
-								ok: result?.stopReason === "completed", stopReason: result?.stopReason,
-								childId: run.childId, capabilities: tags, toolsExtra: extraTools.length, allowed: allow.size,
-								reply: reply || "(子代理无文本输出)",
+								ok: outs.every((o) => o.ok), batch: true, count: outs.length,
+								dispatched: outs.map((o) => ({ childId: o.childId, label: o.label, capabilities: o.capabilities, allowed: o.allowed, stopReason: o.stopReason, reply: o.reply, error: o.error })),
 							};
-						} finally { try { await run.dispose?.(); } catch { /* noop */ } }
+						}
+						/* 非阻塞: 立即返回各子代理 id; 完成结果由宿主投递(delivery=parent) */
+						return {
+							ok: failed.length === 0, batch: specs.length > 1, count: spawned.length,
+							async: true,
+							dispatched: spawned.map((s) => s.ok
+								? { childId: s.childId, label: s.label, capabilities: s.capabilities, toolsExtra: s.toolsExtra, allowed: s.allowed }
+								: { label: s.label, error: s.error }),
+							note: "已派出; 各子代理完成时结果会由宿主投递给本会话(异步)。需要同步结果请再派一次并设 wait=true。",
+						};
 					} catch (e) {
 						return { ok: false, error: String((e && e.message) || e) };
 					}

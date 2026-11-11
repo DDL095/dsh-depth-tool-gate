@@ -2,6 +2,43 @@
 
 > 最新版本在前。版本号单一权威源 = `package.json`。条目中的 commit hash 是可校验的锚点。
 
+## v0.13.2 (2026-11-11) —— 并行与续派面稳定批
+
+修两个实测坐实的缺陷：**派单只能串行**，**续派后子代理工具面完全变掉**。
+
+- **并行派单（此前做不到）**：宿主 `SubagentActivationSpec` 的 `delivery` 语义是
+  「Parent delivery notifies the model; caller delivery only returns the result」。
+  旧实现用 `caller` + `await run.result` → 必须等子代跑完，一次只能一个。
+  改为 `delivery: "parent"` → **立即返回各子代理 id，完成结果由宿主异步投递给本会话**
+  （与宿主原生 `subagent` 工具同范式：它也是 "immediately returns its id, the
+  runtime notifies you when it finishes"）；
+- **批量派单**：新增 `tasks[]` 参数，每项一个独立子代理（各自的 prompt / 能力面），
+  一次发出、互不等待、互不影响；实测三个子代理的 allow 尺寸分别为 8/9/22 —— 面互不干扰；
+- **续派面稳定（关键修复）**：子代跑完后再 `send_message` 续派 → 宿主 `coldResume`
+  冷恢复 → **重新物化 agent** → `agent/created` 再次触发。旧实现首次创建时就把预挂
+  删了，续派时认领失败 → 落回普通 deny 名单裁剪 → **工具面完全变了**（生产台账实测
+  同一 agentId 的面从 109 掉到 5）→ KV 前缀失效、工具用不了。改为**预挂持久**
+  （认领后不删，由 TTL 清扫兜底），续派命中同一份 allow 名单；
+- **补挂源快照**：补挂（allow 名单里不在可裁集的名字，如 preset 行工具）原先读主会话
+  **实时**面 → 主会话面一变（改 `main_deny` / pending 进件 / 新工具出现），补挂就补不上
+  → 子代理面跟着漂移（实测同标签 `literature-lead` 的面在 23 与 25 之间跳）。
+  改为派发时**快照**主会话的定义 → 子代理面与主会话此后怎么变无关；
+- **台账可观测**：新增 `supplementedFromSnapshot` / `supplementedFromLive` /
+  `claimCount` 三个字段 —— 能直接看出补挂走了哪条路、该子代理被认领了几次（即被续派过几次）；
+- **回执渲染提取为共用模块**（`composed-render.mjs`）：原先 `host.v2.mjs` 内联 render +
+  测试里一份"同构副本"，两份代码会漂移（改 host 不改副本 → 测试全绿而真 render 已坏）。
+  现测试直接 import 真实现；断言从 7 条增至 22 条，覆盖异步 / 批量 / 超长落盘各分支；
+- **发布链新增两条断言**：A2b「运行期相对 import 目标必须在包内」（`host.v2.mjs` 静态
+  import 了 `./composed-render.mjs`，白名单漏了它 → 装上即 `ERR_MODULE_NOT_FOUND`）；
+  A17 改为**先挖注释再查残留**（注释里提到旧包名不是漏改的标识符），并配端到端探针
+  `probe-a17-comment-strip.mjs` 验证「字符串里的旧名仍被拦、注释里的不误伤」；
+- **中文版流程图**（`docs/gating-flow.zh.svg`）：中文标签 + 明暗自适应
+  （透明背景 + CSS 变量 + `prefers-color-scheme` 媒体查询），深底与浅底都清晰可读；
+- **新增两个运行时探针**：`probe-composed-continuity.mjs`（续派面稳定：首次与续派的
+  allow 名单必须一致，且续派须走 composed 分支而非普通 deny）与
+  `probe-composed-batch.mjs`（批量并行：N 次 spawn / childId 互异 / 缺省非阻塞 /
+  面互不影响 / `wait=true` 才同步），两者均用阴性对照验证过判别力。
+
 ## v0.13.0 (2026-11-11) —— 双语发布页 + 图示批
 
 发布面按 `dsh-moa-native` 的模式重做：发布页拆成中英双文件，配套流程图与市场卡片图标。

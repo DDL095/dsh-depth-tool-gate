@@ -20,6 +20,9 @@
 | visibleAfter | number | 裁后可见面大小 |
 | supplemented | number | 仅在有补挂时出现：补挂的工具件数 |
 | supplementedNames | string[] | 仅在有补挂时出现：补挂的工具名 |
+| supplementedFromSnapshot | number | 补挂中**取自派发时快照**的件数（快照 = 子代理面与主会话此后怎么变无关） |
+| supplementedFromLive | number | 补挂中取自主会话实时面的件数（快照缺失时的回落路径；非 0 说明该子代理面可能随主会话漂移） |
+| claimCount | number | 该子代理被闸门认领的次数；>1 = 它被续派过（冷恢复会重新物化 agent 并再次过闸） |
 | lockNewNames | number | 仅在本次有新名入闸时出现：新增 pending 件数 |
 | skipped | string | 跳过原因（no-agent-ctx / no-tools-service / disabled 等，与裁剪计数互斥） |
 
@@ -31,6 +34,24 @@
 | denied | deny 模式下=裁掉件数；allow 模式下=清单长度 |
 | allowed | 仅 allow 模式：实际生效的件数 |
 | missing / visibleAfter / pendingDenied | 同上 |
+
+### 2b. 动态组装子代（gateComposed，`dispatch_composed` 派出的子代）
+
+`preset` 字段形如 `(composed:<标签>)` —— 这是识别动态组装子代的标志（常规子代记的是 `header.agentPreset`）。
+
+| 字段 | 含义 |
+|---|---|
+| allowed | 该子代的 allow（keep-only）名单**实际生效**的件数 = 名单 ∩ 可裁名集合 |
+| droppedUnknown | 名单里运行时不存在（已被宿主改名或该 profile 未装）而被丢弃的名数 |
+| knownCount | 该子代可裁名集合的大小（分母） |
+| supplemented | 补挂件数：allow 名单里**不在可裁集**的名字（preset 行工具），其定义注册到子代 own 层 |
+| supplementedNames | 补挂的工具名清单 |
+| supplementedFromSnapshot | 补挂中取自**派发时快照**的件数 —— 快照保证子代面与主会话此后怎么变无关 |
+| supplementedFromLive | 补挂中取自主会话**实时面**的件数（快照缺失时的回落路径）；非 0 说明该子代面可能随主会话漂移 |
+| claimCount | 该子代被闸门认领的次数；**>1 = 它被续派过**（续派会冷恢复并重新物化 agent，再次过闸） |
+| visibleAfter | 裁后可见面大小（补挂计入） |
+
+判读要点：**同一个 agentId 出现多条记录**是正常的 —— 首次创建一条，每次续派再一条。判断"续派后工具面有没有变"，比 `visibleAfter` 是否相同；`claimCount>1` 且 `visibleAfter` 变了，说明该子代续派时换了面（旧版本会掉到普通 deny 裁剪的结果，面会骤降）。
 
 ### 3. preset-denied（preset 访问控制）
 

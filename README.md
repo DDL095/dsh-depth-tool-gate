@@ -24,7 +24,7 @@ A DSH subagent inherits the main session's entire tool catalog and the full glob
 
 > **Quick start** — DSH ≥ 0.2.2-rc.1, Node ≥ 24.9.0. In your DSH profile directory (`~/.dsh/profiles/web`): `npm i dsh-depth-tool-gate`, then **append** `"dsh-depth-tool-gate"` to the `dsh.profile.bundles` array in that profile's `package.json`, restart DSH, and open **Settings → Subagent Tool Surface**. Full steps and prerequisites: [Install](#install).
 
-**Current version v0.13.0** · 中文说明见 [README.zh.md](README.zh.md) · 中文文档 `docs/*.md`
+**Current version v0.13.2** · 中文说明见 [README.zh.md](README.zh.md) · 中文文档 `docs/*.md`
 
 ---
 
@@ -118,6 +118,22 @@ dispatch_composed({
 
 The child is born with **only** the union's tools — everything else, including tools that appear later, is invisible to it. Tag definitions live in `capabilities` in the config and are fully overridable. A tag whose allow-list contains `dispatch_composed` additionally lets the child spawn one more generation; the built-in `reader-lead` and `literature-lead` tags do. There is no `-lead` suffix parser — "lead" is simply a property of the tag's tool list.
 
+**Parallel dispatch.** Pass `tasks[]` to spawn several independent children at once — each with its own prompt and its own surface, none waiting on the others:
+
+```js
+dispatch_composed({
+  tasks: [
+    { prompt: "Read paper A and summarise its findings", capabilities: ["reader"], description: "paper A" },
+    { prompt: "Read paper B and summarise its findings", capabilities: ["reader"], description: "paper B" },
+    { prompt: "Extract every DOI from the bibliography", capabilities: ["literature"], description: "DOIs" },
+  ]
+})
+```
+
+**Async by default.** The call returns the children's ids immediately; each child's result arrives later as a message from the host — the same shape as the host's own `subagent` tool. Pass `wait: true` when you need the results in hand before continuing (that blocks until all of them finish).
+
+**A resumed child keeps its surface.** Sending a follow-up to a child that already finished re-materialises it; the gate re-applies the *same* allow-list rather than falling back to the generic deny list, so the tool surface does not shift underneath a continuing conversation.
+
 ### 5. Per-role instruction briefs (`role-briefs`)
 
 Instead of loading the whole global instruction file into every subagent, each role gets a compact brief: a shared `_common.md` plus a role-specific file, injected as a system-prompt section (so it can be attributed byte-precisely by `provenance_audit`). Budget target: ≤3 KB per child.
@@ -168,7 +184,7 @@ npm i dsh-depth-tool-gate
 ```jsonc
 {
   "dependencies": {
-    "dsh-depth-tool-gate": "^0.13.0"
+    "dsh-depth-tool-gate": "^0.13.2"
   },
   "dsh": {
     "profile": {

@@ -550,6 +550,7 @@ window.__ModuleLoader__.load({
 					h("div", { style: { background: "rgba(106,170,255,.05)", border: "1px solid rgba(106,170,255,.15)", borderRadius: 6, padding: 8, marginBottom: 10 } },
 						h("b", { style: { fontSize: 12 } }, "能力标签表 → dispatch_composed 动态面"),
 						h("span", { style: { fontSize: 11, opacity: 0.65, marginLeft: 8 } }, "标签=可组合预案; 派单时 capabilities=[\"标签\"] 取并集组装; keep-only 语义(面外一切不可见)"),
+					h("div", { style: { fontSize: 11, opacity: 0.65, marginTop: 4 } }, "v0.13.2 起 dispatch_composed 默认异步: 立即返回各子代 id, 结果由宿主异步投递给会话; 传 tasks[] 可一次并行派出多个子代(各自独立面), 传 wait=true 才同步等待。"),
 						h("div", { style: { display: "flex", alignItems: "center", gap: 10, marginTop: 6, flexWrap: "wrap" } },
 							h("span", { style: { fontSize: 12 } }, `当前来源: ${capsCustom ? "自定义表(config.capabilities, 整体覆盖内置)" : "内置缺省(DEFAULT_CAPABILITIES)"} · ${Object.keys(capsDisplay).length} 个标签`),
 							capsCustom || draft?.capabilities === null ? h("button", { onClick: () => setDraft((d) => ({ ...d, capabilities: null })), title: "保存后清掉 config 键, 恢复随插件内置标签", style: { padding: "3px 10px", fontSize: 11, cursor: "pointer" } }, "↺ 恢复内置(待保存)") : null),
@@ -640,7 +641,7 @@ window.__ModuleLoader__.load({
 					h("p", { style: { fontSize: 12, opacity: 0.75 } }, "每行=一个会话/子代理诞生时的裁剪快照(只增不改); 红色 ev 行=治理事件(lock/config 损坏等)。文件: ", h("code", null, data.audit_path)),
 					audit.length === 0 ? h("div", { style: { opacity: 0.6, fontSize: 12 } }, "暂无记录(重启后首个子代理诞生时开始记账)") :
 					h("table", { style: { borderCollapse: "collapse", width: "100%" } },
-						h("thead", null, h("tr", null, ["时间(本地)", "会话/子代", "深度", "角色/事件", "禁用", "pending", "裁后可见", "缺名/错误"].map((t) => h("th", { key: t, style: th }, t)))),
+						h("thead", null, h("tr", null, ["时间(本地)", "会话/子代", "深度", "角色/事件", "禁用", "pending", "裁后可见", "补挂", "续派", "缺名/错误"].map((t) => h("th", { key: t, style: th }, t)))),
 						h("tbody", null, audit.map((e, i) => h("tr", { key: i, style: { borderTop: "1px solid rgba(128,128,128,.15)" } },
 							h("td", { style: td }, fmtLocal(e.ts)),
 							h("td", { style: { ...td, fontFamily: "monospace", fontSize: 11 } }, String(e.agentId || "").slice(0, 20)),
@@ -649,6 +650,16 @@ window.__ModuleLoader__.load({
 							h("td", { style: td }, e.denied ?? (e.skipped || "-")),
 							h("td", { style: td }, (e.pendingDenied && e.pendingDenied.length) || ""),
 							h("td", { style: td }, e.visibleAfter ?? "-"),
+							/* 补挂来源: 快照=面与主会话解耦(稳定); 实时=回落路径(面可能随主会话漂移) */
+							h("td", { style: { ...td, fontSize: 11, whiteSpace: "normal" } },
+								e.supplemented ? h("span", null,
+									h("span", { style: { color: e.supplementedFromLive ? "#e8a33d" : "#7fd4a8" } }, String(e.supplemented)),
+									e.supplementedFromLive ? h("span", { style: { opacity: 0.75 }, title: "部分补挂取自主会话实时面 —— 该子代理面可能随主会话变化" }, " 实时")
+										: e.supplementedFromSnapshot ? h("span", { style: { opacity: 0.75 }, title: "补挂取自派发时快照 —— 面与主会话此后怎么变无关" }, " 快照") : null,
+								) : ""),
+							/* 续派次数: >1 = 该子代被续派过(冷恢复会重新物化 agent 并再次过闸) */
+							h("td", { style: { ...td, fontSize: 11 }, title: "该子代被闸门认领的次数; >1 = 被续派过" },
+								e.claimCount > 1 ? h("b", { style: { color: "#e8a33d" } }, String(e.claimCount)) : (e.claimCount || "")),
 							h("td", { style: { ...td, whiteSpace: "normal" } }, e.ev ? String(e.err || "").slice(0, 40) : ((e.missing && e.missing.length) ? e.missing.length : ""))))))),
 
 				/* ── Tab4: 闸门与发现(lock) ── */

@@ -24,7 +24,7 @@ DSH 的子代理默认继承主会话的**全部工具**与**全部全局引导*
 
 > **快速开始** —— 需 DSH ≥ 0.2.2-rc.1、Node ≥ 24.9.0。在你的 DSH profile 目录（`~/.dsh/profiles/web`）下执行 `npm i dsh-depth-tool-gate`，然后把 `"dsh-depth-tool-gate"` **追加**到该 profile `package.json` 的 `dsh.profile.bundles` 数组末尾，重启 DSH，打开 **设置 → 子代理工具面**。完整步骤与前置条件见 [安装](#安装)。
 
-**当前版本 v0.13.0** · English see [README.md](README.md) · 中文文档 `docs/*.md`
+**当前版本 v0.13.2** · English see [README.md](README.md) · 中文文档 `docs/*.md`
 
 ---
 
@@ -43,7 +43,9 @@ DSH 的子代理默认继承主会话的**全部工具**与**全部全局引导*
 
 ## 工作原理
 
-![闸门流程](docs/gating-flow.svg)
+![闸门流程](docs/gating-flow.zh.svg)
+
+<sub>英文版：[Gating flow](docs/gating-flow.svg)</sub>
 
 全部动作都发生在 `agent/created` —— 宿主刚把 agent 创建完、还没开始干活的那一刻：
 
@@ -118,6 +120,22 @@ dispatch_composed({
 
 子代出生就**只有**这个并集里的工具 —— 面外的一切（包括之后才出现的工具）对它不可见。标签定义写在配置的 `capabilities` 里，可完全覆盖。若某标签的 allow 名单里含 `dispatch_composed`，该子代还能**再派一级**；内置的 `reader-lead` 与 `literature-lead` 就是这样。**没有 `-lead` 后缀解析机制** —— "lead" 只是标签工具表的一个属性。
 
+**并行派单。** 传 `tasks[]` 可一次派出多个彼此独立的子代 —— 各自有自己的 prompt 与自己的工具面，互不等待：
+
+```js
+dispatch_composed({
+  tasks: [
+    { prompt: "读论文 A 并总结要点", capabilities: ["reader"], description: "论文A" },
+    { prompt: "读论文 B 并总结要点", capabilities: ["reader"], description: "论文B" },
+    { prompt: "从参考文献里抽出全部 DOI", capabilities: ["literature"], description: "DOI" },
+  ]
+})
+```
+
+**默认异步。** 调用**立即返回**各子代理的 id；每个子代理跑完后，结果由宿主作为一条消息投递给本会话 —— 与宿主原生 `subagent` 工具同范式。若需要当场拿到结果再继续，传 `wait: true`（会等到全部完成，期间本工具阻塞）。
+
+**续派不换面。** 给已跑完的子代续派任务时，宿主会冷恢复并重新物化它；闸门重新施加的是**同一份** allow 名单，而不是落回通用 deny 名单 —— 工具面不会在一段持续的对话中途变掉。
+
 ### 5. 角色化引导（`role-briefs`）
 
 不再让子代背全量全局引导：改为每个岗位一份紧凑引导 —— 共用的 `_common.md` + 岗位专属文件，以系统提示段注入（因此可用 `provenance_audit` 按字节精确归因）。预算目标：每个子代 ≤3 KB。
@@ -168,7 +186,7 @@ npm i dsh-depth-tool-gate
 ```jsonc
 {
   "dependencies": {
-    "dsh-depth-tool-gate": "^0.13.0"
+    "dsh-depth-tool-gate": "^0.13.2"
   },
   "dsh": {
     "profile": {

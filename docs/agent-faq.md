@@ -29,6 +29,12 @@
 ## Q7: dispatch_composed / 能力标签是什么？
 动态最小工具面派单：`capabilities=["literature","reader"]` 标签取并集 → spawn 子代 + `restrict({allow})` keep-only（面外一切不可见，未来新工具自动不可见）。标签表=config `capabilities`（存在且非空时整体覆盖内置；内置 5 个：reader 8 件 / reader-lead 9 件 / ocr 9 件 / literature 22 件 / literature-lead 23 件）。标签写错=**直接失败**并列出可用标签；标签内的 MCP 工具缺失时只丢 MCP 件、其余保留（降级而非空面）。dispatch_composed 本身不进子代默认 baseline。
 
+**并行**：传 `tasks[]` 可一次派出多个独立子代（各有自己的 prompt 与自己的面，互不等待）——例如同时读三篇论文。顶层 `prompt`/`capabilities`/`tools` 作各任务的默认值。
+
+**异步**：默认**立即返回**各子代理 id，不等它们跑完；每个子代完成时结果由宿主作为一条消息投递给本会话（与宿主原生 `subagent` 工具同范式）。需要当场拿结果再继续时才传 `wait=true`（会阻塞到全部完成）。
+
+**续派不变面**：给已跑完的子代续派任务时，宿主冷恢复并重新物化它；闸门重新施加**同一份** allow 名单，不会落回通用 deny 名单 —— 工具面不会在一段持续的对话中途变掉。台账里该子代的 `claimCount>1` 即表示被续派过。
+
 ## Q8: 裁剪出了问题怎么排查？
 见 [troubleshooting.md](./troubleshooting.md)。核心口诀：**静默降级=最危险**（v0.8.2 起 role-brief 缺失记台账 `role-brief-missing` 可查）；面板 7 Tab 逐层对账（配置清单 vs 运行时发现 vs lock 状态 vs 台账事实）。
 
