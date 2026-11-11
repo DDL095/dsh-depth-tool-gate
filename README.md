@@ -202,11 +202,42 @@ npm i dsh-depth-tool-gate
 
 **Step 4 — verify.** Ask your agent to call `explain_gate`; it should report a visible count and the tools it cut, with a reason for each.
 
+### Install it with an agent (copy-paste prompt)
+
+If you would rather let an agent do the whole thing, paste this prompt into any DSH session that has file and shell access. It installs the package into the profile, registers the bundle **without overwriting the existing list**, and stops before the restart so you can see what changed:
+
+```
+Install the DSH plugin "dsh-depth-tool-gate" for me.
+
+Do exactly this, and nothing else:
+1. Determine my active DSH profile directory (the profile whose package.json
+   contains dsh.profile.bundles; do not assume ~/.dsh/profiles/web).
+2. In that profile directory, run `npm i dsh-depth-tool-gate`.
+3. Edit that same profile's package.json: add "dsh-depth-tool-gate" to the END
+   of the existing dsh.profile.bundles array. Keep every entry that is already
+   there — append, never replace the list.
+4. Show me the diff of package.json and stop.
+
+Do NOT restart DSH yourself — I will do that. Do NOT edit any other file.
+After I restart, I will ask you to call explain_gate to verify.
+```
+
+If your agent has the `plugin_manager` tool, the equivalent one-liner is:
+
+```
+plugin_manager(action="install_bundle", target="dsh-depth-tool-gate")
+```
+
+> **Why the "append, don't replace" wording matters.** `dsh.profile.bundles` is replaced
+> wholesale if a shorter list is pasted over it — the profile then loads without
+> `@deepseek-ai/dsh-base` and the harness comes up broken. This is the single
+> most common way a profile install goes wrong.
+
 ### Requirements
 
 - **DSH ≥ 0.2.2-rc.1** — the plugin relies on four host-internal behaviours: `tools.restrict()` / `tools.view()` exist and fail loudly on unknown names, `view()` takes a scope key, the "own" layer is exempt from restrictions, and restrictions compose as an intersection. It also uses `createScope()` from `@deepseek-ai/dsh-scope`, passing only the context and key (its third `options` argument is not used).
 - **Node ≥ 24.9.0** (matches the host).
-- Peer packages are provided by the host: `@deepseek-ai/dsh-scope`, `@deepseek-ai/dsh-typert-protocol`. They are declared as optional peer dependencies, but the plugin imports them statically — **if your DSH installation does not already provide them, the plugin will fail to load with `ERR_MODULE_NOT_FOUND`**. Do not install them yourself unless your setup requires it.
+- Peer packages are provided by the host: `@deepseek-ai/dsh-scope`, `@deepseek-ai/dsh-typert-protocol`. They are declared as optional peer dependencies, and **since v0.14.0 the plugin resolves them at runtime instead of importing them statically** — it asks the host for its own copy via `profileContext.installAnchor`, so the plugin and the host share one instance (two instances would give `dsh-scope` two different scope tags and silently break `tools.restrict()`). Nothing to install by hand. If the host cannot be reached, the plugin refuses to pretend it governs: it logs `peer-missing`, marks the panel degraded with the reason, and records it in the audit ledger.
 
 ---
 

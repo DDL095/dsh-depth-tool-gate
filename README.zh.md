@@ -204,11 +204,41 @@ npm i dsh-depth-tool-gate
 
 **第 4 步 —— 验证。** 让 agent 调 `explain_gate`；它应返回可见数与被裁的工具，每件带原因。
 
+### 让 agent 代装（可复制粘贴的提示词）
+
+不想手动装的话，把下面这段提示词贴进任何一个有文件与 shell 权限的 DSH 会话。它会装包、注册 bundle、且**不覆盖你原有的 bundles 列表**，并在重启前停下让你先看改动：
+
+```
+帮我安装 DSH 插件 dsh-depth-tool-gate。
+
+严格按这几步做，不要多做：
+1. 先确定我当前活跃的 DSH profile 目录（即 package.json 里含 dsh.profile.bundles
+   的那个 profile；不要想当然地当成 ~/.dsh/profiles/web）。
+2. 在该 profile 目录下执行 `npm i dsh-depth-tool-gate`。
+3. 编辑同一个 profile 的 package.json：把 "dsh-depth-tool-gate" **追加**到
+   现有 dsh.profile.bundles 数组的**末尾**。已有条目一条都不能少 —— 是追加，
+   不是整个替换。
+4. 把 package.json 的改动展示给我，然后停下。
+
+不要自己重启 DSH —— 我自己来。不要改任何其它文件。
+我重启之后会让你调 explain_gate 来验证。
+```
+
+若你的 agent 带有 `plugin_manager` 工具，等价的一句话是：
+
+```
+plugin_manager(action="install_bundle", target="dsh-depth-tool-gate")
+```
+
+> **为什么强调「追加而不是替换」**：`dsh.profile.bundles` 是整体替换语义 —— 用一份更短的
+> 列表覆盖它，profile 就会少装 `@deepseek-ai/dsh-base`，harness 直接起不来。
+> 这是 profile 安装最常见的翻车方式。
+
 ### 前置条件
 
 - **DSH ≥ 0.2.2-rc.1**（依赖宿主四条内部语义：`tools.restrict()` / `tools.view()` 存在且对未知名 fail-loud、`view()` 收 scope key、own 层豁免 restrictions、限制取交集；另用 `createScope()`，只传 ctx 与 key 两个参数）
 - **Node ≥ 24.9.0**（与宿主一致）
-- 两个 peer 包由宿主提供（`@deepseek-ai/dsh-scope`、`@deepseek-ai/dsh-typert-protocol`）。它们声明为 optional peer，但插件是**静态 import** —— 若宿主未提供，插件会以 `ERR_MODULE_NOT_FOUND` 加载失败。除非你的环境确实需要，否则不要自行安装。
+- 两个 peer 包由宿主提供（`@deepseek-ai/dsh-scope`、`@deepseek-ai/dsh-typert-protocol`）。它们声明为 optional peer；**自 v0.14.0 起插件改为运行时解析而非静态 import** —— 经 `profileContext.installAnchor` 向宿主要它自己那一份，保证插件侧与宿主侧是**同一实例**（两份实例会让 `dsh-scope` 拿到两个不同的 scope 标签，静默破坏 `tools.restrict()`）。**无需自行安装**。若确实拿不到宿主那份，插件不会假装自己在治理：日志记 `peer-missing`、面板标注降级并给出原因、台账留痕。
 
 ---
 

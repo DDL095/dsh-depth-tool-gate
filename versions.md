@@ -2,6 +2,150 @@
 
 > 最新版本在前。版本号单一权威源 = `package.json`。条目中的 commit hash 是可校验的锚点。
 
+## v0.14.0 (2026-11-12) —— 发布态可加载性根治 + 静默失败族清理批
+
+这一批的主线是**"为什么这个插件总有缺陷"**的根因清理, 不是单点修 bug。
+所有方案都经过 MoA 异构三路盲审 + 独立复核实测; 被盲审推翻的初版方案记在末尾
+「否决项」—— 留着它们是因为"当初为什么那样想"比"最终结论"更有复用价值。
+
+### P0 · npm 标准安装路径下插件加载失败(发布阻断级)
+
+**缺陷**: 照 README 第一条命令 `npm i dsh-depth-tool-gate` 装上后, **整个插件加载
+失败**(`ERR_MODULE_NOT_FOUND: '@deepseek-ai/dsh-typert-protocol'`), 整个 profile 受累。
+
+**根因**(实测链闭合, 非推断): `host.v2.mjs` 用**静态裸名 import** 两个宿主包。
+Node ESM 静态 import 的解析锚点是**语句所在文件自身位置**, 不是 loader 的 baseUrl ⇒
+发布态装到 `~/.dsh/profiles/web/node_modules/` 时上溯链里没有宿主包 ⇒ 加载期失败。
+本机永远发现不了: 开发态源仓自带 `node_modules/@deepseek-ai/` junction ⇒ 必然能解析。
+**"开发态能跑 ⇒ 发布态也能跑"这个推断不成立。**
+
+**修法**: 改用 `peer-resolver.mjs` 运行时解析(`createRequire` + 锚点链):
+`profileContext.installAnchor`(宿主 DSH 本体 package.json, 权威) → 插件自身位置 →
+`process.execPath` 上溯。解析到的与宿主 `dsh-tools` 侧是**同一物理文件** ⇒
+`require(esm)` 与宿主 ESM import 共享同一模块实例 ⇒ `dsh-scope` 的
+`kScope`(Symbol("dsh.scope"), **非注册 Symbol**)单例 ⇒ 不产生双实例。
+
+**否决项(重要)**: 曾考虑把 peer 改成普通 dependencies(自带副本) —— **实测否决**:
+双实例 ⇒ kScope 不同 ⇒ 宿主 `tools.restrict()` 抛 `requires a scoped context` ⇒
+把"加载失败"升级成"裁剪静默失效"(fail-open), 比现状更糟。故必须复用宿主那一份。
+
+**实例同一性校验(行为化, 非 typeof 形状检查)**: 形状检查 100% 免疫 ——
+若锚点命中另一份 dsh-scope(自带副本 / npm 自动装 peerDependencies / hoisting),
+形状照样对但 kScope 不同 ⇒ 裁剪静默失效。改用**与宿主参照实例比对函数引用**,
+并在无宿主参照时明确判"未验证"(不假装通过)。
+
+**降级姿态**(盲审三路一致推翻初版): 初版是 `return { skipped: "peer-missing" }`
+= **fail-open** —— agent 拿到完整工具面而治理看起来正常, 与本插件自己批判过的
+"静默失败"根因自相矛盾。改为:
+- 裁剪 **fail-closed**(返回显式 error 而非 skipped);
+- **不阻断宿主启动**(实测宿主 `installFailLoud`: 插件树加载失败会杀死整个 profile,
+  插件没有否决宿主的资格);
+- **不卸面板**(面板是唯一能看见"治理没生效"的通道, 卸掉它 = 自断观测通路);
+  peer 缺失时改用兜底基类, 面板仍能打开并显示 `degraded` + 原因;
+- 降级事实走**不依赖 peer / profileContext 的通道**(台账 + `DEGRADED` marker 文件)。
+
+### P1 · 工具出口 lossless 净化(从"修一个"到"结构上不可能漏")
+
+v0.13.3 只给 `dispatch_composed` 一个工具加了出口净化, 另三个
+(`explain_gate` / `list_agent_presets` / `create_goal`)仍是裸返回 ⇒ 未来新增字段
+会重演同一缺陷。改为**统一注册入口** `registerTool()`: 出口自动净化,
+以后新增工具走它就不可能漏。
+
+**toLossless 的静默丢数据修**(盲审 + 独立复核指出的缺陷): 旧版对非普通原型对象
+(Date/Map/Error/class 实例)**整个键省略** ⇒ `toLossless({ error: new Error("boom") })`
+⇒ `{}` ⇒ **一条失败被渲染成"成功且无错误"**。改为**显式映射**:
+Error → `{__lossless:"Error", name, message, stack?}`; Date → `{__lossless:"Date", iso}`;
+Map/Set/RegExp 同理; 其它对象 → `{__lossless:"<构造名>"}` + 尽力枚举自有属性;
+深度超限 → `{__lossless:"DepthExceeded"}`。值总在, 且带标记, 调用方与面板都能看出。
+
+### P2 · 台账归档(追加 + 归档, 归档不删历史)
+
+`audit.jsonl` 此前只追加无轮转(现网 870KB)。改为: 超 8MB 即轮转为
+`archive/audit-<ts>.jsonl`(**改名, 历史整份保留**), 面板 `recent()` 跨档读取
+(当前档 + 归档档, 按时间倒序), 轮转检查用写计数节流(每 64 次写查一次),
+启动时也检查一次。
+
+两处实测缺陷已修:
+- **档名碰撞**: 毫秒时间戳同毫秒两次轮转 ⇒ 同名 ⇒ `renameSync` **覆盖** ⇒ 静默丢
+  整档历史(直接违背"历史一条不丢")。改为目标已存在时**绝不覆盖**, 追加序号。
+- **注释说谎**: 旧实现注释写"尾读(只取末尾若干行)"实际是 `readFileSync` 整个文件 ⇒
+  24 档×5MB 时 limit=30 仍同步读 120MB。改为**真尾读**(fd 块回退, 实测 18.2MB
+  文件读 30 条耗时 0ms)。注释即契约: 说尾读就必须尾读。
+
+诚实口径: 常规轮转一条不丢; 只有长期运行导致归档档数超上限(24)时, 最老的档会被
+清理, 且**清理动作本身进台账可见**。
+
+### 机制防线 · A18 发布态同构冒烟闸
+
+A1–A17 断言链**全部是文本扫描**, 对"导出物装上即崩"这一类缺陷**结构性失明**。
+A18 把 staging 产物装进**没有宿主包的干净目录**, 用**宿主真包 @deepseek-ai/cordis
+的 Context** 真挂载插件, 断言: 入口可 import / 四个工具真注册 / **网关真挂上**
+(半挂载不再蒙混过关) / apply 内部无 `console.error` 失败痕迹 / 降级路径可见 /
+peer 与宿主同一实例 / 各入口 `node --check`。
+
+初版用手搓假 ctx, 盲审判为"生产的手写替身"; 实测也证了 —— 假 ctx 缺
+`reflect.provide` ⇒ 真 TypertRemoteService 构造失败 ⇒ 网关半挂载, 而 apply() 照样
+不抛 ⇒ 旧版 A18 把半挂载判成绿。改用真 Context 后这类半挂载必红。
+
+**变异自检**(闸门判别力的唯一可靠证伪手段): `scripts/probe-a18-mutation.mjs`
+把两类真实缺陷放回去 —— ①v0.13.3 形态(静态裸名 import) ②半挂载(网关构造被
+打坏) —— 断言 A18 对二者**必红**、对当前形态**必绿**。有存活变异 ⇒ 闸门是戏。
+
+### 根因调研(91 个提交逐条读)
+
+缺陷根因分布: 边界漏网 43% / 语义误解 29% / 发布链 23% / 验证缺口 11% /
+流程缺失 9% / 契约漂移 0%(尚未被观测到, 不是安全)。
+
+可复用的结论(详见 `docs/` 与维护文档):
+1. **发布态与开发态漂移是断言链的设计盲区** —— 文本正确的导出物可以完全无法加载。
+2. **开发态的 node_modules junction 会系统性掩盖发布态缺陷**。
+3. dtg 依赖约 18 条**无文档承诺**的宿主语义, 只以注释形式存在, 宿主升级后全部可能失效。
+4. **"同构副本"假绿在 dtg 历史上确证 3 次**, 最终以"提取共用模块"消灭, 而非"加一致性检查"。
+5. **静默失败是最高频形态**, 且全部逃过现有观测手段(进程正常退出 + 服务端 canary 绿
+   不能作为发布闸)。
+6. **同一现象被修 3 次的教训**: 找到真根因的动作是"加可观测性定位到语义层",
+   不是再改一次逻辑。
+7. **单插件承担过多职责 ⇒ 缺陷形态退化为"形状×职责的接口错"**, 加固方向是加形状
+   对账断言, 而不是继续加逻辑分支。
+
+### 否决项(留着, 因为"当初为什么那样想"更有复用价值)
+
+- **自带 peer 副本修 P0** —— 否决(双实例 ⇒ 裁剪静默失效, 更糟)。
+- **降级用 `skipped` 放行** —— 否决(fail-open, 与自身原则矛盾)。
+- **peer 缺失时卸面板** —— 否决(自断观测通路)。
+- **锚点法当作终态** —— 盲审指出真正根因在宿主侧(`boot()` 未传 `bareModuleBaseUrl` +
+  loader helper 写失败 ⇒ 裸名 import 无兜底), 锚点法是插件侧 workaround;
+  已记录待提宿主上游工单。
+
+### 探针
+
+新增: `probe-peer-resolver.mjs`(21) / `probe-publish-install.mjs`(6) /
+`probe-audit-archive.mjs`(26) / `probe-a18-mutation.mjs`(7) /
+`probe-tool-returns.mjs`(35, 承接 v0.13.3 的 12/13 红项)。
+既有 9 套全部更新以适配"假 ctx 需提供 profileContext"(P0 改为运行时解析后,
+探针不给宿主锚点就会走降级 —— 那是降级姿态正确生效, 不是被测逻辑坏了)。
+
+## v0.13.4 (2026-11-11) —— baseline 底线闸封死 composed 治理绕过洞
+
+**缺陷(P0-B)**: 含 `dispatch_composed` 权限的 lead 孙代可经 `tools` 直传或自定义标签,
+使孙孙代获得 baseline 高危件 —— `gateComposed` 的 keep-only 只与 `known` 求交
+(全局行名在 known 里就直接放行), 不在 known 的件经补挂注册到 own 层, 而 own 层
+豁免 restrictions ⇒ 双通道绕过负面清单。
+
+**修法(双层防御纵深)**:
+- **A 入口闸**(`executeComposed`): 组装面命中生效 `baseline_deny` 件 ⇒ 派发即报错,
+  点名标签与件名(fail-loud 不静默剔除); baseline 以 `readConfig` 生效值为准。
+- **B 兜底**(`gateComposed`): allowList 与 baseline 求差; 补挂循环对 baseline 件
+  `continue` + warn + audit(`ev=composed-baseline-block`, `rec.baselineBlocked`)。
+- `dispatch_composed` 单件豁免(两层同口径): 它是本通道级联机制(lead 标签设计;
+  生产 config 的 baseline 含它 + lead 标签含它是并存现状), 豁免后风险闭环 ——
+  孙代持有它也组不出任何 baseline 件。
+
+**探针** `scripts/probe-baseline-gate.mjs`(29 断言)全绿: ①`tools=[moa_loop]` 报错零
+spawn ②批量混入整批拒 ③正常标签(reader/literature/ocr/literature-lead)面不变
+④baseline 含 `dispatch_composed` 时 lead 级联仍工作 ⑤覆盖表自定义标签含 baseline
+件报错点名 ⑥兜底拦派发后配置变更场景(audit+rec 在案)。
+
 ## v0.13.3 (2026-11-11) —— lossless JSON 返回值修复批
 
 **缺陷**: `dispatch_composed` 的 `wait=true` 路径每次都返回

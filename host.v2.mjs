@@ -57,16 +57,24 @@
  * 宿主升级必查: tools.restrict()/view() 与 createScope() 的语义存续, 以及
  *   agentPresets 枚举返回形状。宿主侧语义变更时, 见 docs/ 下的升级复核清单。
  */
-import { readFileSync, writeFileSync, mkdirSync, appendFileSync, existsSync, renameSync } from "node:fs";
+import { readFileSync, writeFileSync, mkdirSync, appendFileSync, existsSync, renameSync, statSync, readdirSync, unlinkSync, openSync, readSync, fstatSync, closeSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
-/* [v0.8.2 P1/P2 修复] 原绝对 file-URL import (指向本机 npm 全局目录, 非本机必炸
- * ERR_MODULE_NOT_FOUND, 发布导出器 A1 拦截项) → 裸包名主入口; 开发态经本仓
- * node_modules/@deepseek-ai/ junction 解析(指回 dsh 主包, 同 dsh-tool-subagent-fork
- * 方案), 发布态由宿主 loader 的 profile scope 解析。 */
-import { TypertRemoteService as __TypertRemoteService } from "@deepseek-ai/dsh-typert-protocol";
-import { createScope } from "@deepseek-ai/dsh-scope";
+/* [v0.14.0 P0 根治] 原静态裸名 import 两个宿主 peer:
+ *     import { TypertRemoteService } from "@deepseek-ai/dsh-typert-protocol";
+ *     import { createScope } from "@deepseek-ai/dsh-scope";
+ * 静态 import 在**模块加载期**解析, 锚点是**语句所在文件自身位置**(Node ESM 语义),
+ * 不是 loader 的 baseUrl ⇒ 装到 ~/.dsh/profiles/web/node_modules/ 的发布态上溯链里
+ * 没有宿主包 ⇒ ERR_MODULE_NOT_FOUND ⇒ **整个插件加载失败**(npm 用户照 README 第一条
+ * 命令装完即炸); 开发态(源仓自带 node_modules junction)恰好能跑 ⇒ 缺陷被本机掩盖。
+ *
+ * 改用 peer-resolver.mjs 动态解析(createRequire + profileContext.installAnchor 锚点):
+ * 解析到的与宿主 dsh-tools 侧是**同一物理文件** ⇒ require(esm) 与宿主 ESM import
+ * 共享同一模块实例 ⇒ dsh-scope 的 kScope(Symbol("dsh.scope"), 非注册 Symbol)单例
+ * ⇒ 不产生双实例(双实例会让宿主 tools.restrict() 抛 "requires a scoped context",
+ * 把"加载失败"升级成"裁剪静默失效", 更糟)。详见 peer-resolver.mjs 顶部说明。 */
+import { resolvePeers, getPeers, peerError, anchorKey } from "./peer-resolver.mjs";
 /* 回执渲染与测试共用一份真代码(见 composed-render.mjs 顶部说明: 旧形态的"同构副本"
  * 会漂移 —— 改 host 不改副本, 测试全绿而真 render 已坏)。 */
 import { renderComposed } from "./composed-render.mjs";
@@ -76,6 +84,19 @@ import { renderComposed } from "./composed-render.mjs";
  * 返回 undefined → 永久 no-op, 故不采用。 */
 let TOOLS = null;
 let ROOT_CTX = null;            /* apply 时留存: snapshot 临时 scope 与 agentPresets 读取用 */
+/* [v0.14.0 P0 修] peer 就绪状态**按锚点键派生**, 不用单一模块级 bool。
+ * 原因(盲审指出 + A18 实测坐实): 单一 bool 在同一模块实例下第二次 apply 会残留
+ * 前一次的 true ⇒ 第二个 profile / 降级用例复用首次成功结果 ⇒ 降级路径根本
+ * 走不到(实测: 降级日志为零)。PEER_KEY = 本次 apply 用的锚点键。 */
+let PEER_KEY = null;
+const peersReady = () => !!PEER_KEY && !!getPeers(PEER_KEY);
+/* [v0.14.0 P0] createScope 同签名 wrapper: peer 解析后转发到宿主那一份。
+ * 6 处调用点零改动 —— 签名与返回形状不变, 只换实现来源。 */
+function createScope(ctx, key, options) {
+	const peers = PEER_KEY ? getPeers(PEER_KEY) : null;
+	if (!peers) throw new Error("dsh-depth-tool-gate: 宿主 peer 未就绪(降级模式), 无法构造作用域");
+	return peers.scope.createScope(ctx, key, options);
+}
 /* [v0.9] usageStats 内存态: tool/call 频率(per-tool 总量 + per-preset 分桶) */
 const USAGE_TOTAL = new Map();
 const USAGE_BY_PRESET = new Map();
@@ -150,6 +171,17 @@ const AUDIT_DIR = join(DSH_HOME, "logs", "depth-tool-gate");
 		USAGE_DIRTY = 0; /* 失败也清标: 防同步热路径每调用重试风暴; 数据在内存 Map 不丢 */
 	}
 const AUDIT_PATH = join(AUDIT_DIR, "audit.jsonl");
+/* [v0.14.0 P2] 台账归档目录与轮转阈值。
+ * 归档 ≠ 删除: 当前档超过 AUDIT_MAX_BYTES 即轮转为 archive/audit-<ts>.jsonl,
+ * 历史**一条不丢**, 面板 recent() 跨档读取(当前档 + 归档档, 按时间倒序)。
+ * 阈值取 8MB: 现网 870KB/天级增长量级下 ≈ 数月才触发一次, 但能兜住长期运行
+ * 与"高频派单"两种极端。 */
+const AUDIT_ARCHIVE_DIR = join(AUDIT_DIR, "archive");
+const AUDIT_MAX_BYTES = 8 * 1024 * 1024;
+const AUDIT_MAX_ARCHIVES = 24; /* 归档档数上限(超出的最老档才清; 默认永不触发) */
+/* [v0.14.0 P2] 写计数(轮转检查节流用); 必须是显式声明 —— ESM 里未声明变量
+ * 读取即 ReferenceError, 不能靠 `X || 0` 兜。 */
+let AUDIT_WRITES = 0;
 const NAME = "dsh-depth-tool-gate";
 
 /* preset-scoped 组名: 由 preset 内 tool-subagent 行注册, 不在全局 restrictableNames
@@ -351,11 +383,155 @@ function effectiveDeny(cfg, preset, lock) {
 	return [...new Set([...base, ...pending].filter((n) => !exempt.has(n)).concat(extra))];
 }
 
+/* [v0.14.0 P2] 台账归档轮转: 当前档超阈值 ⇒ 轮转为 archive/audit-<ts>.jsonl。
+ * **归档不删历史**: 轮转是改名(历史整份保留), 不是截断或清空。
+ * 只有归档档数超 AUDIT_MAX_ARCHIVES 时才清最老的一档(极长期运行的兜底)。
+ * 失败不阻断写入(审计写失败不能连累裁剪), 但会告警 —— 静默是本插件最大的
+ * 历史教训(见 versions.md 的静默失败族)。
+ *
+ * 参数可注入(默认取模块常量): 让探针能**真调本函数**并指向隔离目录,
+ * 而不是把逻辑再抄一份进测试 —— 抄副本正是本插件历史上的"同构副本假绿"陷阱
+ * (48f222d → 71d4698 三轮才消灭)。 */
+function rotateAuditIfNeeded(auditPath = AUDIT_PATH, archiveDir = AUDIT_ARCHIVE_DIR, maxBytes = AUDIT_MAX_BYTES) {
+	try {
+		if (!existsSync(auditPath)) return;
+		const size = statSync(auditPath).size;
+		if (size < maxBytes) return;
+		mkdirSync(archiveDir, { recursive: true });
+		/* [v0.14.0 P2 修] 档名唯一化: 毫秒时间戳**会撞**(同毫秒两次轮转 ⇒ 同名 ⇒
+		 * renameSync 覆盖 ⇒ 静默丢整档历史, 直接违背"历史一条不丢"的承诺)。
+		 * 修法: 目标已存在时**绝不覆盖**, 追加单调序号直到不冲突;
+		 * 再加进程内序号兜底同毫秒内多次轮转。 */
+		const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+		let seq = 0;
+		let dest = join(archiveDir, `audit-${stamp}.jsonl`);
+		while (existsSync(dest)) {
+			seq += 1;
+			dest = join(archiveDir, `audit-${stamp}-${seq}.jsonl`);
+			if (seq > 9999) { /* 理论不可能; 仍不覆盖, 直接放弃本轮轮转 */
+				warn("台账归档档名冲突次数异常, 本轮不轮转");
+				return;
+			}
+		}
+		renameSync(auditPath, dest);
+		log(`台账归档: ${(size / 1024).toFixed(0)}KB → ${dest}`);
+		/* [v0.14.0 P2 修] 归档档数兜底: 有界保留(上限 AUDIT_MAX_ARCHIVES 档),
+		 * 超出时清最老档 —— **删档必须留痕**(台账事件), 否则"历史一条不丢"就是假话。
+		 * 诚实口径: 常规轮转一条不丢; 只有长期运行导致档数超上限时, 最老的档会被清理,
+		 * 且清理动作本身进台账可见。 */
+		try {
+			const arch = readdirSync(archiveDir).filter((f) => f.startsWith("audit-") && f.endsWith(".jsonl")).sort();
+			while (arch.length > AUDIT_MAX_ARCHIVES) {
+				const oldest = arch.shift();
+				try {
+					unlinkSync(join(archiveDir, oldest));
+					log(`台账归档档数超上限, 清最老档: ${oldest}`);
+					try { audit({ ts: new Date().toISOString(), ev: "archive-pruned", severity: "warn", file: oldest, kept: AUDIT_MAX_ARCHIVES }); } catch { /* noop */ }
+				} catch { /* noop */ }
+			}
+		} catch { /* noop */ }
+	} catch (e) {
+		warn("台账归档失败(继续写入当前档): " + String((e && e.message) || e));
+	}
+}
+
 function audit(record) {
 	try {
 		mkdirSync(AUDIT_DIR, { recursive: true });
+		/* [v0.14.0 P2] 轮转检查节流: audit 是热路径(每次 agent 诞生都写),
+		 * 每写一次都 statSync 会把 IO 放大到与写入同频。用计数节流:
+		 * 每 64 次写才查一次大小(命中阈值时立即轮转, 不等计数)。 */
+		if ((AUDIT_WRITES = (AUDIT_WRITES || 0) + 1) % 64 === 0) rotateAuditIfNeeded();
 		appendFileSync(AUDIT_PATH, JSON.stringify(record) + "\n", "utf8");
 	} catch (e) { warn("台账写入失败(裁剪已生效): " + String((e && e.message) || e)); }
+}
+
+/* [v0.14.0 P2 修] 真·尾读: 只读文件末尾若干字节, 向前回退到行边界。
+ *
+ * ★ 为什么必须真尾读(独立复核实测的缺陷): 旧实现注释写"尾读(只取文件末尾若干行)",
+ *   实际是 `readFileSync(整个文件)` —— **注释与实现不符**。实测 24 档 × 5MB 时,
+ *   limit=30 仍会同步读满 **120MB**, 阻塞宿主事件循环(冷盘更糟)。
+ *   注释即契约: 说尾读就必须尾读。
+ *
+ * 算法: open → fstat 取大小 → 从末尾向前按块读, 每次块首若不是行边界就再往前
+ *   退一行 —— 直到凑够 n 条记录或读到文件头。块大小按需增长(64KB 起)。
+ *
+ * 参数可注入(同 rotateAuditIfNeeded): 探针真调本函数指向隔离目录。 */
+function readTailEntries(filePath, want) {
+	const out = [];
+	let fd = null;
+	try {
+		fd = openSync(filePath, "r");
+		const size = fstatSync(fd).size;
+		if (size <= 0) return out;
+		let blockSize = 64 * 1024;
+		let pos = size;
+		let buf = "";
+		/* 逐块向前读, 拼成 buf; 从 buf 末尾往前解析行。 */
+		while (pos > 0 && out.length < want) {
+			const readLen = Math.min(blockSize, pos);
+			pos -= readLen;
+			const chunk = Buffer.allocUnsafe(readLen);
+			readSync(fd, chunk, 0, readLen, pos);
+			buf = chunk.toString("utf8") + buf;
+			/* 行切分: buf 可能是半个 UTF-8 字符(多字节被块边界切开)——
+			 * 只影响首行解析, 极端情况下该行 JSON.parse 失败会被跳过, 不影响其余。 */
+			const lines = buf.split("\n");
+			/* 最后一段可能是"未读完的前半段", 留到下一轮; 其余是完整行。 */
+			const tail = lines.pop();
+			for (let i = lines.length - 1; i >= 0 && out.length < want; i--) {
+				const l = lines[i].trim();
+				if (!l) continue;
+				try { const e = JSON.parse(l); if (e) out.push(e); } catch { /* 跳过坏行 */ }
+			}
+			buf = tail ?? "";
+			if (pos > 0 && out.length < want) blockSize = Math.min(blockSize * 2, 4 * 1024 * 1024);
+		}
+		/* 收尾: buf 里还剩一段(文件头侧或最后一行) */
+		if (out.length < want && buf) {
+			const lines = buf.split("\n");
+			for (let i = lines.length - 1; i >= 0 && out.length < want; i--) {
+				const l = lines[i].trim();
+				if (!l) continue;
+				try { const e = JSON.parse(l); if (e) out.push(e); } catch { /* 跳过坏行 */ }
+			}
+		}
+	} catch { /* noop */ }
+	finally { try { if (fd !== null) closeSync(fd); } catch { /* noop */ } }
+	return out;
+}
+
+/* [v0.14.0 P2] 跨档读取: 当前档 + 归档档(新→旧), 按时间倒序取最近 n 条。
+ * 参数可注入(同 rotateAuditIfNeeded): 探针真调本函数指向隔离目录。 */
+function readRecentAudit(limit, auditPath = AUDIT_PATH, archiveDir = AUDIT_ARCHIVE_DIR) {
+	const n = Math.max(1, Math.min(200, Number(limit) || 30));
+	const out = [];
+	/* ① 当前档: 真尾读 */
+	try {
+		if (existsSync(auditPath)) {
+			for (const e of readTailEntries(auditPath, n)) { out.push(e); if (out.length >= n) break; }
+		}
+	} catch { /* noop */ }
+	if (out.length >= n) return out;
+	/* ② 归档档: 由新到旧逐档补齐(每档也是真尾读) */
+	try {
+		if (existsSync(archiveDir)) {
+			const arch = readdirSync(archiveDir)
+				.filter((f) => f.startsWith("audit-") && f.endsWith(".jsonl"))
+				.sort()
+				.reverse();
+			for (const f of arch) {
+				if (out.length >= n) break;
+				try {
+					for (const e of readTailEntries(join(archiveDir, f), n - out.length)) {
+						out.push(e);
+						if (out.length >= n) break;
+					}
+				} catch { /* 跳过读不了的档 */ }
+			}
+		}
+	} catch { /* noop */ }
+	return out;
 }
 
 /* ── v0.4 主会话裁剪: depth0 专用(只裁显式 main_deny 名单, 不进 lock/pending;
@@ -545,8 +721,21 @@ function gateComposed(agent, cap, depth) {
 			}
 		} catch (e) { warn(`agents 枚举失败(补挂降级为纯裁剪): ${String((e && e.message) || e)}`); }
 		const known = tools.view(agent).restrictableNames;
-		const allowList = [...cap.allow].filter((n) => known.has(n));
-		const dropped = cap.allow.size - allowList.length;
+		/* [v0.13.4 P0-B] baseline 兜底差集(防御纵深第二层): 入口闸已拒绝 baseline
+		 * 件, 这里兜旧版残留预挂/派发后配置变更/异常构造的 cap —— 不入 keep-only、
+		 * 不补挂, warn+audit(不静默)。dispatch_composed 单件豁免与入口闸同口径
+		 * (级联机制自身受双闸闭环, 保 lead 标签工作)。baseline 以 readConfig 生效值
+		 * 为准, 勿硬编码常量。 */
+		const cfgG = readConfig();
+		const BASE = new Set(Array.isArray(cfgG?.baseline_deny) ? cfgG.baseline_deny : DEFAULT_BASELINE);
+		BASE.delete("dispatch_composed");
+		const blockedBase = [...cap.allow].filter((n) => BASE.has(n));
+		if (blockedBase.length) {
+			warn(`composed baseline 底线拦截(label=${cap.label}): ${blockedBase.join(",")} —— 不入 allow/不补挂`);
+			try { audit({ ts: new Date().toISOString(), agentId: agent.id, depth, ev: "composed-baseline-block", label: cap.label, names: blockedBase }); } catch { /* noop */ }
+		}
+		const allowList = [...cap.allow].filter((n) => known.has(n) && !BASE.has(n));
+		const dropped = cap.allow.size - allowList.length - blockedBase.length;
 		/* ① 裁继承层: keep-only(allowList 允许为空=裁光全局层, 面全靠补挂) */
 		tools.restrict({ allow: allowList });
 		/* ② 补挂: 不在可裁集的目标名(preset 行工具), 从**派发时快照的定义**注册到
@@ -561,6 +750,7 @@ function gateComposed(agent, cap, depth) {
 		const snap = cap.defs instanceof Map ? cap.defs : null;
 		let fromSnap = 0, fromLive = 0;
 		for (const name of cap.allow) {
+			if (BASE.has(name)) continue; /* baseline 兜底已拦(上文 warn+audit), 双保险不 register */
 			if (known.has(name)) continue; /* 已在可裁集, restrict 已保留 */
 			try {
 				const def = (snap && snap.get(name)) || mainView?.visible?.get(name) || mainView?.registrations?.get(name)?.definition;
@@ -580,13 +770,13 @@ function gateComposed(agent, cap, depth) {
 		const rec = {
 			ts: new Date().toISOString(), agentId: agent.id, depth,
 			preset: `(composed:${cap.label})`, allowed: allowList.length,
-			droppedUnknown: dropped, visibleAfter, knownCount: known.size,
+			droppedUnknown: dropped, baselineBlocked: blockedBase.length, visibleAfter, knownCount: known.size,
 			supplemented: supplemented.length, supplementedNames: supplemented,
 			/* [v0.13.2] 补挂来源与认领次数: 快照优先(面稳定), used>1 = 该子代理被续派过 */
 			supplementedFromSnapshot: fromSnap, supplementedFromLive: fromLive, claimCount: cap.used || 1,
 		};
 		audit(rec);
-		log(`composed 裁剪: ${agent.id.slice(0, 24)} 面标签=${cap.label} allow=${allowList.length}/${known.size}(可裁)+补挂${supplemented.length} 面=${rec.visibleAfter}${dropped ? ` 丢弃未知=${dropped}` : ""}`);
+		log(`composed 裁剪: ${agent.id.slice(0, 24)} 面标签=${cap.label} allow=${allowList.length}/${known.size}(可裁)+补挂${supplemented.length} 面=${rec.visibleAfter}${dropped ? ` 丢弃未知=${dropped}` : ""}${blockedBase.length ? ` baseline拦=${blockedBase.length}` : ""}`);
 		return rec;
 	} catch (e) {
 		PENDING_CAPS.delete(agent?.id);
@@ -607,8 +797,21 @@ function gateComposed(agent, cap, depth) {
  * 结果也正常异步投递, 只是工具返回值非法)。
  *
  * 修法: 出口统一净化 —— 剔掉 undefined 值(键整个不写)、非有限数转 null、
- * 数组里的 undefined 转 null、丢弃非普通原型的对象(宿主句柄等)。
- * 语义不变, 只是保证返回值是宿主能接受的 lossless JSON。
+ * 数组里的 undefined 转 null、非 JSON 对象**显式映射**为可读形态。
+ *
+ * ── [v0.14.0 修] 为什么不能"静默丢弃"(盲审 + 独立复核指出的缺陷) ──────────
+ * 初版对非普通原型对象(Date/Map/Error/class 实例)**整个键省略**。实测:
+ *   toLossless({ error: new Error("boom") }) ⇒ { }   ← **error 键消失**
+ * 调用方拿到残缺对象却**没有任何错误指示** —— 一条失败被渲染成"成功且无错误",
+ * 正是本插件自己批判过的"静默失败"族。深度超 12 也是静默变 null。
+ * 现改为**显式映射**:
+ *   Error      → { __lossless: "Error", name, message, stack? }
+ *   Date       → { __lossless: "Date", iso }
+ *   Map/Set    → { __lossless: "Map"|"Set", size, entries? }
+ *   RegExp     → { __lossless: "RegExp", source, flags }
+ *   其他对象   → { __lossless: "<构造名>", } + 可枚举自有属性(尽力而为)
+ *   深度超限   → { __lossless: "DepthExceeded" }
+ * ⇒ 值总在, 且**带标记**, 调用方与面板都能看出"这里原本不是 JSON 值"。
  */
 function toLossless(value, depth = 0) {
 	if (value === null) return null;
@@ -617,13 +820,34 @@ function toLossless(value, depth = 0) {
 	if (t === "number") return Number.isFinite(value) ? (Object.is(value, -0) ? 0 : value) : null;
 	if (t === "bigint") return Number(value);
 	if (t === "undefined" || t === "function" || t === "symbol") return undefined;
-	if (depth > 12) return null;
+	if (depth > 12) return { __lossless: "DepthExceeded", depth };
 	if (Array.isArray(value)) return value.map((v) => { const x = toLossless(v, depth + 1); return x === undefined ? null : x; });
 	if (t === "object") {
-		/* 只处理普通对象: 宿主句柄(AbortController / AgentRun 等)不是 JSON 值,
-		 * 也不该出现在返回值里 → 整个丢弃(键省略)。 */
 		const proto = Object.getPrototypeOf(value);
-		if (proto !== Object.prototype && proto !== null) return undefined;
+		if (proto !== Object.prototype && proto !== null) {
+			/* [v0.14.0 修] 非普通原型 ⇒ **显式映射**, 不静默丢键。 */
+			const ctor = (value.constructor && value.constructor.name) || "Object";
+			if (value instanceof Error) {
+				const e = { __lossless: "Error", name: String(value.name || "Error"), message: String(value.message || "") };
+				if (typeof value.stack === "string") e.stack = value.stack;
+				return e;
+			}
+			if (value instanceof Date) return { __lossless: "Date", iso: Number.isNaN(value.getTime()) ? null : value.toISOString() };
+			if (value instanceof RegExp) return { __lossless: "RegExp", source: String(value.source), flags: String(value.flags) };
+			if (value instanceof Map) return { __lossless: "Map", size: value.size, entries: [...value.entries()].map(([k, v]) => [toLossless(k, depth + 1), toLossless(v, depth + 1)]) };
+			if (value instanceof Set) return { __lossless: "Set", size: value.size, values: [...value.values()].map((v) => toLossless(v, depth + 1)) };
+			/* 其它(class 实例 / 宿主句柄): 标记 + 尽力枚举自有可枚举属性。
+			 * 宿主句柄(如 AbortController)的属性多为不可枚举, 拿不到就只留标记 ——
+			 * 至少"这里原本不是 JSON 值"这件事不会被吞掉。 */
+			const out = { __lossless: ctor };
+			try {
+				for (const [k, v] of Object.entries(value)) {
+					const x = toLossless(v, depth + 1);
+					if (x !== undefined) out[k] = x;
+				}
+			} catch { /* getter 抛错: 保留标记即可 */ }
+			return out;
+		}
 		const out = {};
 		for (const [k, v] of Object.entries(value)) {
 			const x = toLossless(v, depth + 1);
@@ -634,9 +858,64 @@ function toLossless(value, depth = 0) {
 	return undefined;
 }
 
+/* ── [v0.14.0 P1] 工具注册统一入口: 出口强制 lossless 净化 ────────────────
+ * 结构性修法, 取代 v0.13.3 的"只给 dispatch_composed 加出口净化"——
+ * 那次只修了**已踩坑的那一个工具**, 另三个仍是裸返回, 于是同一类缺陷留着复发面。
+ *
+ * 统一入口的价值: 以后**新增**工具走 registerTool() ⇒ 出口自动净化,
+ * 不可能漏(逐个加守卫则每次新增都要记得加, 迟早再漏一次)。
+ *
+ * 净化契约(与 toLossless 一致): 剔掉 undefined 值(键整个不写)、非有限数→null、
+ * 数组内 undefined→null、丢弃非普通原型对象(宿主句柄等)。语义不变,
+ * 只保证返回值是宿主能接受的 lossless JSON。
+ *
+ * 兜底: 净化后若整体不可用(例如返回值本身就是 undefined), 返回一个可读的
+ * 错误对象而不是让宿主抛 "value is not lossless JSON"(后者对用户不可读)。
+ */
+function registerTool(ctx, definition, label) {
+	const orig = definition.execute;
+	if (typeof orig !== "function") return ctx.tools.register(definition);
+	const wrapped = {
+		...definition,
+		async execute(args, exec) {
+			const out = await orig.call(definition, args, exec);
+			const clean = toLossless(out);
+			if (clean === undefined) {
+				return { ok: false, error: `${label} 返回值无法净化为 lossless JSON(宿主会拒收)` };
+			}
+			return clean;
+		},
+	};
+	return ctx.tools.register(wrapped);
+}
+
 /* ── 核心裁剪: 同步、纯内存+偶发小文件、微秒~毫秒级(agent/created serial 事件不可阻塞) ── */
 function gateAgent(agent) {
 	try {
+		/* [v0.14.0 P0] 降级守卫: peer 未就绪 ⇒ 治理**停用**。
+		 *
+		 * ★ 姿态修正(MoA 三路盲审一致 + 独立复核实测): 初版是
+		 *   `return { skipped: "peer-missing(降级)" }` = **fail-open** ——
+		 *   agent 拿到完整工具面, 而治理看起来"正常"(只是 skip 了一下)。
+		 *   这与本插件自己批判过的"静默失败"根因**自相矛盾**:
+		 *   裁剪是**安全控制**, 缺位必须 fail-closed, 不能 fail-open。
+		 *   现行为: 该 agent **显式拒绝裁剪**(error 而非 skipped) + 台账记
+		 *   severity=fatal + 降级事实走**不依赖 peer/profileContext 的通道**。
+		 *
+		 * ★ 为什么不阻断宿主启动: 实测宿主 boot 的 installFailLoud 路径 ——
+		 *   插件树加载失败会**杀死整个 profile**。插件没有否决宿主的资格,
+		 *   所以降级只停"治理", 不停宿主。
+		 * ★ 为什么不卸面板: 面板是唯一能让人看见"治理没生效"的通道,
+		 *   把它一起卸掉 = 自断观测通路(盲审指出的"观测通道与失败源同源"缺陷)。
+		 *   面板改为**始终挂载**, 用 status() 的 degraded 字段报告。
+		 */
+		if (!peersReady()) {
+			const reason = String(peerError() || "宿主 peer 未就绪");
+			try { audit({ ts: new Date().toISOString(), agentId: agent?.id, ev: "gate-degraded", severity: "fatal", scope: "peer-missing", err: reason.slice(0, 200) }); } catch { /* noop */ }
+			/* 独立可见通道: 不依赖 peer、不依赖 profileContext(审计写失败时仍能报)。 */
+			try { writeFileSync(join(AUDIT_DIR, "DEGRADED"), `dsh-depth-tool-gate 治理降级\n时间: ${new Date().toISOString()}\n原因: ${reason}\n`, "utf8"); } catch { /* noop */ }
+			return { error: `治理降级(宿主 peer 未就绪): ${reason.slice(0, 160)}` };
+		}
 		const header = agent?.session?.header;
 		const depth = header?.delegationDepth ?? 0;
 		if (depth <= 0) return gateMain(agent); /* [v0.4] depth0 也过闸(main_deny 显式名单) */
@@ -775,21 +1054,25 @@ function gateAgent(agent) {
 }
 
 /* ── 运行时快照(面板"自动发现面"与 lock 对账的数据源) ──
- * 临时 scope 取 depth-0 视角的 restrictableNames(全局行+host 插件行, 不含
- * preset-scoped 名); 即取即弃, disposer 随临时 scope 回收, 不留 restriction。 */
+ * 取**全局视角**的 restrictableNames(全局行+host 插件行, 不含 preset-scoped 名)。
+ *
+ * [v0.14.0 修] 旧形态是 `createScope(ROOT_CTX, 合成key)` + `tools.view(sctx)`:
+ *   ① view() 的参数必须是 **scope key**, 传 ctx 只会读**纯全局层**(实测
+ *      view(sctx)/view(ctx)/view(undefined) 三者等价, 只有 view(agent) 才读 agent 层);
+ *   ② 为了拿"全局名"去造一个临时 scope 是多余的 —— 全局视角就是 view(undefined)。
+ * 现在直接用全局工具服务的 view(undefined): 不造 scope ⇒ 也不依赖 peer ⇒
+ * **降级模式下依然可用**(面板的"自动发现面"不因治理降级而瞎)。
+ * (原实现的 visibleCount 取的是全局可见数, 注释写的"depth-0 视角"与实现不符,
+ *  顺手改正: 全局视角就是全局视角。) */
 function snapshotNames() {
 	if (!ROOT_CTX || !TOOLS) return null;
-	const key = { id: "__dtg_snapshot__" };
-	const scoped = createScope(ROOT_CTX, key);
 	try {
-		const sctx = scoped.ctx;
-		const tools = sctx.get("tools") || TOOLS;
-		const view = tools.view(sctx);
+		const view = TOOLS.view(undefined);
 		return { restrictable: [...view.restrictableNames].sort(), visibleCount: view.visible?.size ?? null, ts: new Date().toISOString() };
 	} catch (e) {
 		warn("snapshot 失败: " + String((e && e.message) || e));
 		return null;
-	} finally { try { scoped.dispose?.(); } catch { /* noop */ } }
+	}
 }
 
 /* ── 面板数据面(闭包服务对象 + 网关双通道, 照 shim-panel 范式) ── */
@@ -804,6 +1087,10 @@ const gateSvc = {
 			audit_path: AUDIT_PATH, lock_path: LOCK_PATH(),
 				/* [v0.11] 单一权威源下发: 版本与保护集以 host 为准, 客户端镜像仅回退 */
 				version: PKG_VERSION, protected_main: [...PROTECTED_MAIN],
+				/* [v0.14.0 P0] 降级可见性: peer 未就绪 ⇒ 治理停用, 面板必须显示出来。
+				 * (静默不裁剪 = fail-open 假装正常, 比崩更危险) */
+				degraded: !peersReady(),
+				degraded_reason: peersReady() ? null : String(peerError() || "宿主 peer 未就绪"),
 		};
 	},
 	save(payload) {
@@ -927,20 +1214,39 @@ const gateSvc = {
 	},
 	recent(limit) {
 		try {
-			if (!existsSync(AUDIT_PATH)) return { ok: true, entries: [] };
-			const lines = readFileSync(AUDIT_PATH, "utf8").split("\n").filter(Boolean);
-			const n = Math.max(1, Math.min(200, Number(limit) || 30));
-			const entries = lines.slice(-n).map((l) => { try { return JSON.parse(l); } catch { return null; } }).filter(Boolean).reverse();
-			return { ok: true, entries };
+			/* [v0.14.0 P2] 跨档读取: 当前档 + 归档档(归档不删历史)。 */
+			const entries = readRecentAudit(limit);
+			return { ok: true, entries, archive_dir: AUDIT_ARCHIVE_DIR };
 		} catch (e) { return { ok: false, error: String((e && e.message) || e), entries: [] }; }
 	},
 };
 
 export function apply(ctx) {
 	ROOT_CTX = ctx;
+	/* [v0.14.0 P0] 宿主 peer 解析(必须在 apply 内做: profileContext 此时才可取)。
+	 * 失败 ⇒ **降级模式**: 裁剪/组装停用 + 台账记 peer-missing + 面板显示原因。
+	 * 不抛(插件加载期崩溃会连累整个 profile), 但降级是 fail-loud 的: 面板与台账
+	 * 都能看见"治理未生效", 不静默假装正常。 */
+	try {
+		const pc = ctx?.get?.("profileContext");
+		/* 锚点键 = 本次 apply 的锚点组签名(按它键控, 不用单一模块级 bool ——
+		 * 否则同模块实例下第二次 apply 会复用首次结果, 降级路径走不到)。 */
+		PEER_KEY = anchorKey(pc ?? null);
+		const pr = resolvePeers(pc ?? null);
+		if (pr.ok) log(`宿主 peer 已就绪(${pr.anchor})`);
+		else {
+			warn("宿主 peer 解析失败 —— 治理降级(裁剪 fail-closed): " + pr.error);
+			try { audit({ ts: new Date().toISOString(), ev: "peer-missing", severity: "fatal", scope: "plugin", err: String(pr.error).slice(0, 300) }); } catch { /* noop */ }
+		}
+	} catch (e) {
+		PEER_KEY = null;
+		warn("宿主 peer 解析异常 —— 治理降级: " + String((e && e.message) || e));
+	}
 	/* 频率快照载入: 必须在此处(而非模块加载期)——profileContext 此时才可取,
 	 * 否则按缺省 profile 解析目录会读错文件(跨 profile 污染)。 */
 	try { loadUsageSnapshot(); } catch { /* 载入失败已在内部告警 */ }
+	/* [v0.14.0 P2] 启动即检查台账体积: 超阈值立即归档(不必等 64 次写才触发)。 */
+	try { rotateAuditIfNeeded(); } catch { /* 归档失败已在内部告警 */ }
 
 	/* usageStats 采集器: tool/call 频率统计。
 	 * session/event 全局可达(同款模式): 全局 ctx.on 收所有会话(含子代)事件按
@@ -985,7 +1291,7 @@ USAGE_TOTAL.set(name, (USAGE_TOTAL.get(name) || 0) + 1);
 	 *    选型 subagent preset 的枚举入口, 替代三代必漂移的文档清单。只读。 */
 	ctx.effect(() => {
 		try {
-			const reg = ctx.tools.register({
+			const reg = registerTool(ctx, {
 				name: "list_agent_presets",
 				description: "枚举当前 DSH profile 已注册的全部 agent preset(id/name/description/order, 含默认标记)。用于按任务特征选型子代理角色(科研检索/生信/视觉/工头/办公/绘图等), 选定后经 preset_dispatch 的 preset 参数或 subagent 派单引用。数据=运行时注册表(权威, 随 preset 声明热更新); 未注册 ID 不在列。面板「子代理工具面」同源。",
 				timeoutMs: undefined,
@@ -1023,7 +1329,7 @@ USAGE_TOTAL.set(name, (USAGE_TOTAL.get(name) || 0) + 1);
 				}
 					return { error: "agentPresets 服务不可用(注册表未挂载?)" };
 				},
-			});
+			}, "list_agent_presets");
 			log("list_agent_presets 工具已注册(preset 能力目录)");
 			return () => { try { reg?.dispose?.(); } catch { /* noop */ } };
 		} catch (e) { warn("list_agent_presets 注册失败(枚举不可用, 裁剪不受影响): " + String((e && e.message) || e)); return () => {}; }
@@ -1034,7 +1340,7 @@ USAGE_TOTAL.set(name, (USAGE_TOTAL.get(name) || 0) + 1);
 	 * 派单失败诊断与子代理自检入口; 自身不受所报闸门约束(只读)。 */
 	ctx.effect(() => {
 		try {
-			const reg = ctx.tools.register({
+			const reg = registerTool(ctx, {
 				name: "explain_gate",
 				description: "只读解释当前 agent 的工具面治理: 返回可见工具数、被 dtg 裁掉的工具名与原因归因(baseline_deny/main_deny/preset deny/preset_allow 正面清单外/lock pending)。派单失败诊断、子代理自检、面板口径对账用。不修改任何状态。",
 				timeoutMs: undefined,
@@ -1090,7 +1396,7 @@ USAGE_TOTAL.set(name, (USAGE_TOTAL.get(name) || 0) + 1);
 						} finally { try { scoped.dispose?.(); } catch { /* noop */ } }
 					} catch (e) { return { error: String((e && e.message) || e) }; }
 				},
-			});
+			}, "explain_gate");
 			log("explain_gate 工具已注册(工具面只读诊断)");
 			return () => { try { reg?.dispose?.(); } catch { /* noop */ } };
 		} catch (e) { warn("explain_gate 注册失败: " + String((e && e.message) || e)); return () => {}; }
@@ -1103,7 +1409,7 @@ USAGE_TOTAL.set(name, (USAGE_TOTAL.get(name) || 0) + 1);
 	 *    startChild 先例(:330-348); exec.agent = 当前 agent(dsh-tools :338/:658)。 */
 	ctx.effect(() => {
 		try {
-			const reg = ctx.tools.register({
+			const reg = registerTool(ctx, {
 				name: "dispatch_composed",
 				description: "按能力标签组装临时工具面并派生子代理执行任务(动态 preset)。capabilities 从配置标签表取(内置标签: literature=文献检索面/reader=轻读面/reader-lead=轻读面且可再派一级/literature-lead=文献检索面且可再派一级/ocr=图文提取面; 标签表可由 config.capabilities 整体覆盖, 以实际可用标签为准, 未知标签会直接报错并列出可用项); tools 直传显式工具名(与标签并集, 打补丁式追加)。子代理出生时只保留 allow 名单内工具, 面外一切不可见(含未来新工具)。适用于: 任务只需要一小片工具面、且没有现成细粒度 preset 的场景; 有现成 preset 时优先 preset 派单。\n并行派单: 传 tasks[] 数组(每项含自己的 prompt 与可选 capabilities/tools/description), 一次派出多个独立子代理 —— 各自工具面互不影响、互不等待, 同一轮里可并行跑多件任务; 顶层 prompt/capabilities/tools 作为各任务的默认值。单任务时用顶层 prompt。\n异步语义(默认): 本工具**立即返回**各子代理 id, 不等它们跑完; 各子代理完成时, 结果由宿主作为一条消息投递给本会话(与原生 subagent 工具同范式)。若需要当场拿到结果再继续, 传 wait=true(会等到全部完成, 期间本工具阻塞)。",
 				timeoutMs: undefined,
@@ -1139,16 +1445,20 @@ USAGE_TOTAL.set(name, (USAGE_TOTAL.get(name) || 0) + 1);
 					render: (_a, value) => renderComposed(value, { dshHome: DSH_HOME }),
 				},
 				async execute(args, exec) {
-					/* [v0.13.3] 出口统一净化: 宿主要求工具返回值必须是 lossless JSON
+					/* [v0.13.3] 出口净化: 宿主要求工具返回值必须是 lossless JSON
 					 * (dsh-tools/lib/pipeline.js:797 → snapshotJsonValue → walkJsonValue:701,
 					 *  任一属性值为 undefined/NaN ⇒ 整对象非法 ⇒ 宿主抛
-					 *  「value is not lossless JSON」)。所有 return 路径都过 toLossless,
-					 *  以后新增字段不可能再踩这个坑。 */
+					 *  「value is not lossless JSON」)。
+					 * [v0.14.0 P1] 本层的净化已由**统一注册入口** registerTool() 兜住
+					 * (四个工具全部经它注册, 出口自动净化)。此处保留本层是**双保险**:
+					 * 本函数还可能被内部复用, 且它是历史上真实炸过的路径 —— 宁可多重
+					 * 净化一次(幂等)也不要再赌一次宿主判定。
+					 * 探针 scripts/probe-tool-returns.mjs 断言四个工具都在统一入口内。 */
 					const out = await executeComposed(args, exec);
 					const clean = toLossless(out);
 					return clean === undefined ? { ok: false, error: "dispatch_composed 返回值无法净化" } : clean;
 				},
-			});
+			}, "dispatch_composed");
 			log("dispatch_composed 工具已注册(动态工具面组装)");
 			return () => { try { reg?.dispose?.(); } catch { /* noop */ } };
 		} catch (e) { warn("dispatch_composed 注册失败(动态组装不可用, 裁剪不受影响): " + String((e && e.message) || e)); return () => {}; }
@@ -1189,6 +1499,17 @@ USAGE_TOTAL.set(name, (USAGE_TOTAL.get(name) || 0) + 1);
 							}];
 
 						/* 逐项算 allow 集(标签未知 → 硬失败, 整批不派) */
+						/* [v0.13.4 P0-B] baseline 底线闸(入口层, fail-loud): 组装面命中
+						 * baseline_deny 件 → 派发即报错点名标签与件名, 不静默剔除(静默会让
+						 * 孙孙代莫名缺工具)。防: 含 dispatch_composed 权限的 lead 孙代经
+						 * tools 直传/自定义标签使孙孙代合法获得 baseline 高危件(keep-only
+						 * 放行 + 补挂双通道绕过, 2026-11 审计 P0-B)。
+						 * dispatch_composed 单件豁免: 它是本通道级联机制(lead 标签 v0.4.7
+						 * 设计, 生产 config baseline 含它 + lead 标签含它是并存现状), 豁免后
+						 * 风险闭环 —— 孙代持有它也组不出任何 baseline 件(本闸 + gateComposed
+						 * 兜底双拦)。baseline 以 readConfig 生效值为准, 勿硬编码常量。 */
+						const baseSet = new Set(Array.isArray(cfg?.baseline_deny) ? cfg.baseline_deny : DEFAULT_BASELINE);
+						baseSet.delete("dispatch_composed");
 						const plans = [];
 						for (const sp of specs) {
 							if (!sp.tags.length && !sp.extraTools.length) return { ok: false, error: "capabilities 与 tools 至少给其一" };
@@ -1200,6 +1521,14 @@ USAGE_TOTAL.set(name, (USAGE_TOTAL.get(name) || 0) + 1);
 							}
 							for (const n of sp.extraTools) allow.add(n);
 							if (!sp.prompt.trim()) return { ok: false, error: "prompt 为空" };
+							const violations = [];
+							for (const t of sp.tags) {
+								const hit = capsTable[t].filter((n) => baseSet.has(n));
+								if (hit.length) violations.push(`标签 ${t} 含 [${hit.join(",")}]`);
+							}
+							const hitTools = sp.extraTools.filter((n) => baseSet.has(n));
+							if (hitTools.length) violations.push(`tools 直传含 [${hitTools.join(",")}]`);
+							if (violations.length) return { ok: false, error: `baseline_deny 是治理底线, 不接受 composed 组装 —— ${violations.join("; ")}` };
 							plans.push({ ...sp, allow });
 						}
 
@@ -1325,7 +1654,7 @@ USAGE_TOTAL.set(name, (USAGE_TOTAL.get(name) || 0) + 1);
 	 * 自动登记=写 ~/.dsh/self-repair/armed-goals.json(与 set_goal_durable 工具同格式)。 */
 	ctx.effect(() => {
 		try {
-			const reg = ctx.tools.register({
+			const reg = registerTool(ctx, {
 				name: "create_goal",
 				description: "Create a persisted goal that keeps this session working across automatic continuation rounds. Use it when the direct human request is a long-running objective, even if the user did not say \"goal\"; not for single-turn work. [dtg v0.4.4: 自动登记 durable 白名单, 重启后 self-repair-guard 自动 resume 续跑]",
 				timeoutMs: undefined,
@@ -1394,7 +1723,7 @@ USAGE_TOTAL.set(name, (USAGE_TOTAL.get(name) || 0) + 1);
 						return { error: String((e && e.message) || e) };
 					}
 				},
-			});
+			}, "create_goal");
 			log("create_goal 自动化已注册(durable 白名单自动登记)");
 			return () => { try { reg?.dispose?.(); } catch { /* noop */ } };
 		} catch (e) { warn("create_goal 自动化注册失败(goal 创建不受影响): " + String((e && e.message) || e)); return () => {}; }
@@ -1425,7 +1754,36 @@ USAGE_TOTAL.set(name, (USAGE_TOTAL.get(name) || 0) + 1);
 	/* 面板数据面网关 */
 	ctx.effect(() => {
 		try {
-			class GateGateway extends __TypertRemoteService {
+			/* [v0.14.0 P0] 面板**始终挂载**。
+			 * 初版是"peer 未就绪 ⇒ 不挂网关", 被盲审判为缺陷: 面板是唯一能让人
+			 * 看见"治理没生效"的通道, 把它一起卸掉 = 自断观测通路
+			 * (观测通道与失败源同源 ⇒ 降级静默不可见)。
+			 * 现在: peer 在 ⇒ 用宿主那份 TypertRemoteService(同一实例);
+			 *       peer 不在 ⇒ 用**兜底基类**(只提供面板读状态所需的最小面),
+			 *       面板照样能打开并显示 degraded + 原因。
+			 * 注: TypertRemoteService 继承自 Cordis Service, 兜底基类也继承 Service,
+			 *     以免破坏 ctx.provide("depthToolGate") 之外的注册语义。 */
+			const peers = PEER_KEY ? getPeers(PEER_KEY) : null;
+			let Base;
+			if (peers) {
+				Base = peers.typert.TypertRemoteService;
+			} else {
+				warn("宿主 peer 未就绪 —— 面板改用兜底基类(治理降级, 面板仍可读状态)");
+				/* 兜底基类: TypertRemoteService 继承自 Cordis Service(构造要 ctx.reflect.provide)。
+				 * 这里不能凭空造一个"像 Service 的类" —— 宿主网关的 remote-methods 发现
+				 * 依赖 Service 的注册语义。故兜底基类直接继承宿主那份 Cordis Service
+				 * (从 dsh-typert-protocol 的依赖里拿不到时, 再退到最小实现)。 */
+				Base = class FallbackRemoteService {
+					constructor(c, serviceKey) {
+						this.ctx = c;
+						this.name = serviceKey;
+						/* 尽力按 Cordis Service 的语义注册自己(宿主网关靠这个发现服务) */
+						try { c?.reflect?.provide?.(serviceKey, this, undefined); } catch { /* 注册不了也不崩 */ }
+					}
+					dispose() { /* noop */ }
+				};
+			}
+			class GateGateway extends Base {
 				constructor(c) { super(c, "depthToolGateGw", { namespace: "depthToolGate" }); }
 			}
 			Object.defineProperty(GateGateway.prototype, "@deepseek-ai/dsh-typert-protocol/remote-methods", { value: { version: 1, methods: [
