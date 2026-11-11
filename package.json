@@ -1,0 +1,94 @@
+{
+  "name": "dsh-depth-tool-gate",
+  "version": "0.11.2",
+  "private": false,
+  "type": "module",
+  "description": "Deny-list tool-surface gating for DSH agents: scope subagent and main-session tool visibility, gate newly appearing tools, compose minimal tool surfaces on demand, and audit every decision.",
+  "license": "MIT",
+  "author": "dsh-depth-tool-gate contributors",
+  "keywords": [
+    "dsh",
+    "deepseek-harness",
+    "agent",
+    "subagent",
+    "tool-gating",
+    "context-budget",
+    "token-optimization",
+    "prompt-slimming",
+    "tool-surface",
+    "audit",
+    "plugin",
+    "multi-agent"
+  ],
+  "homepage": "https://github.com/DDL095/dsh-depth-tool-gate#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/DDL095/dsh-depth-tool-gate.git"
+  },
+  "bugs": {
+    "url": "https://github.com/DDL095/dsh-depth-tool-gate/issues"
+  },
+  "exports": {
+    ".": "./host.v2.mjs",
+    "./client": "./client.js",
+    "./locale/*.json": "./locale/*.json",
+    "./icon": "./icon.svg",
+    "./package.json": "./package.json",
+    "./prompt-slim": "./prompt-slim.mjs",
+    "./role-briefs": "./role-briefs.mjs"
+  },
+  "files": [
+    "host.v2.mjs",
+    "client.js",
+    "role-briefs.mjs",
+    "agents-briefs/_common.md",
+    "agents-briefs/cordis-sub.md",
+    "agents-briefs/cordis-router.md",
+    "agents-briefs/dtg-shell.md",
+    "cordis.patch.yml",
+    "config.default.json",
+    "locale/*.json",
+    "icon.svg",
+    "LICENSE",
+    "README.md",
+    "versions.md",
+    "prompt-slim.mjs",
+    "docs/panel-guide.md",
+    "docs/agent-faq.md",
+    "docs/troubleshooting.md",
+    "docs/audit-schema.md",
+    "docs/tool-annotations.md"
+  ],
+  "peerDependencies": {
+    "@deepseek-ai/dsh-scope": ">=0.2.2-rc.1",
+    "@deepseek-ai/dsh-typert-protocol": ">=0.2.2-rc.1"
+  },
+  "peerDependenciesMeta": {
+    "@deepseek-ai/dsh-scope": {
+      "optional": true
+    },
+    "@deepseek-ai/dsh-typert-protocol": {
+      "optional": true
+    }
+  },
+  "engines": {
+    "node": ">=24.9.0"
+  },
+  "main": "./host.v2.mjs",
+  "icon": "icon.svg",
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "inject": [
+        "@deepseek-ai/dsh-api-remotes",
+        "@deepseek-ai/dsh-client-ui-renderer"
+      ]
+    }
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}

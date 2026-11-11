@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Subagent Tool Surface — Gate & Compose",
+    "description": "Scope the tool surface of subagents and the main session, gate tools that appear at runtime, compose minimal surfaces on demand from capability tags, and audit every decision. Ships the dtg-shell / cordis-sub / cordis-router presets."
+  }
+}

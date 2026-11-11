@@ -1,0 +1,312 @@
+# depth-tool-gate bundle patch
+# 自包含清单: ① depth-tool-gate 插件行(host.v2.mjs + client.js 设置面板)
+#            ② preset-cordis-sub(通用子代面)
+#            ③ preset-dtg-shell(动态组装空壳——dispatch_composed 的必需配套)
+#            ④ preset-cordis-router(纯编排主会话, 可选配套)
+# 安装: plugin_manager install_bundle(dsh-depth-tool-gate)
+# 配套数据(不在包内, 插件运行时按当前 profile 读写):
+#   <profile>/depth-tool-gate.config.json(策略名单/能力标签表) + lock.json(新工具闸门)
+#   + usage.json(调用频率快照) + logs/depth-tool-gate/audit.jsonl(裁剪台账)。
+- insert:
+    - id: depth-tool-gate
+      name: 'dsh-depth-tool-gate'
+    - id: preset-cordis-sub
+      name: '@deepseek-ai/dsh-agent-preset'
+      config:
+        id: cordis-sub
+        name: 'Cordis 子代理(精简注入)'
+        description: 'spawn 派生子代理专用: 能力面与 cordis-deep 一致, 引导=role-briefs 注入(通用铁律+岗位段),
+          prompt-slim 遮蔽冗余全局段。'
+        order: 11
+        plugins:
+          # Same persona as shipped `cordis`: tool descriptions and the skill
+          # catalog carry the operating detail.
+          - id: persona
+            name: '@deepseek-ai/dsh-persona'
+            config:
+              suffix: ''
+              prefix: >-
+                You are a coding agent powered by the {{model}} model.
+                你是通用子代理(cordis-sub): 能力面与主会话一致(可级联派孙, 深度 12), 无人值守执行派单任务,
+                只对派单方负责。通用铁律与岗位要点见注入的引导段。
+          - id: time-context
+            name: '@deepseek-ai/dsh-time-context'
+          - id: tool-bash
+            name: '@deepseek-ai/dsh-tool-bash'
+            disabled: !!js process.platform === 'win32'
+          - id: tool-pwsh
+            name: '@deepseek-ai/dsh-tool-pwsh'
+            disabled: !!js process.platform !== 'win32'
+          - id: tool-fs
+            name: '@deepseek-ai/dsh-tool-fs'
+          - id: tool-fs-search
+            name: '@deepseek-ai/dsh-tool-fs-search'
+            config:
+              sampleOverCapGlobResults: false
+          - id: tool-jobs
+            name: '@deepseek-ai/dsh-tool-jobs'
+          - id: tool-schedule
+            disabled: true
+            name: '@deepseek-ai/dsh-tool-schedule'
+          - id: command-goal
+            disabled: true
+            name: '@deepseek-ai/dsh-command-goal'
+          - id: tool-goal
+            disabled: true
+            name: '@deepseek-ai/dsh-tool-goal'
+          - id: planning
+            name: cordis:group
+            group: true
+            isolate:
+              planMode: true
+            config:
+              - id: plan-mode
+                name: '@deepseek-ai/dsh-plan-mode'
+                config:
+                  section: |
+                    You are in plan mode. Stay in plan mode until exit_plan_mode succeeds or the user switches the session mode. Imperative language to implement changes means plan the implementation, not execute it. A user's conversational agreement — including an answer confirming something you asked — approves nothing and does not end plan mode; fold the confirmed decision into the plan and submit it through exit_plan_mode.
+
+                    Explore first. Use non-mutating reads, searches, static analysis, and checks to ground the plan in the actual repository. Do not edit or write files, change configuration, run formatters or code generation that rewrites tracked files, commit, or otherwise carry out the plan. Prefer existing functions and patterns over new machinery.
+
+                    The tool catalog stays the same across modes for request-cache stability. These plan-mode rules override any later tool description or guidance that suggests using mutation tools; those tools remain listed to keep the tool catalog unchanged. Do not use todo_write to track this planning phase: it tracks implementation after an approved plan, while the plan itself belongs to exit_plan_mode.
+
+                    Resolve discoverable facts by inspection. Use ask_user_question only for user-owned choices or material ambiguity that inspection cannot answer. Do not ask the user where code lives or how current behavior works when you can find out.
+
+                    Make the plan decision-complete: state the goal and success criteria; group implementation changes by subsystem; identify public API, schema, and data-flow changes; cover edge cases, failure modes, tests, acceptance criteria, and explicit assumptions. Keep it concise enough to review but detailed enough that another engineer can implement it without making design decisions.
+
+                    When ready, call exit_plan_mode with the complete plan markdown, starting with a # title. Make exit_plan_mode the only and final tool call in that assistant response: it presents the plan for approval, and implementation begins only in a later step after approval. Do not paste the final plan as a plain reply or ask "should I proceed?" through prose or ask_user_question. If review rejects it, incorporate the feedback and present again. If the review channel is unavailable or aborted, stay in plan mode and ask the user to switch modes manually; do not proceed with implementation.
+          - id: compaction
+            name: cordis:group
+            group: true
+            isolate:
+              compaction: true
+              toolResultPruner: true
+            config:
+              - id: compaction-basic
+                name: '@deepseek-ai/dsh-compaction-basic'
+              - id: command-compact
+                name: '@deepseek-ai/dsh-command-compact'
+              - id: tool-result-pruner
+                name: '@deepseek-ai/dsh-compaction-tool-result-pruner'
+                config:
+                  thresholdChars: 8192
+                  headChars: 4096
+                  tailChars: 1024
+          - id: delegation
+            name: cordis:group
+            group: true
+            isolate:
+              workflowEngine: true
+            config:
+              - id: tool-subagent-control
+                name: '@deepseek-ai/dsh-tool-subagent-control'
+              - id: tool-subagent
+                name: '@deepseek-ai/dsh-tool-subagent'
+                config:
+                  agentPreset: cordis-sub
+                  provider: spawn
+                  toolName: subagent
+                  modelSelection: true
+                  modelDiscovery: true
+                  # 级联深度: 3 → 12(允许更深的多级派生)
+                  maxDepth: 12
+              - id: tool-subagent-fork
+                name: '@deepseek-ai/dsh-tool-subagent'
+                config:
+                  provider: fork
+                  toolName: subagent_fork
+                  # 级联深度: 3 → 12(允许更深的多级派生)
+                  maxDepth: 12
+              # v7(2026-09-26): 平级绘图子代理 — provider 'illus' 由本地插件
+              # illus-sibling-probe 注册(平级会话+illus-deep preset, 不继承父工具面)
+              - id: tool-subagent-illus
+                disabled: true
+                name: '@deepseek-ai/dsh-tool-subagent'
+                config:
+                  provider: illus
+                  toolName: illus_subagent
+                  # v11(2026-09-26): backgroundMode 改 one-shot — 官方 continuable
+                  # 后台路径(startContinuable→materialize)硬编码 parentAgent+父
+                  # 组合, child 拿不到 illus-deep 绘图面; one-shot 后台走
+                  # provider.start(平级+illus-deep ✓)。程序化续聊由插件 v11 的
+                  # illus_send_message 工具承担(agents.resume 按 header 恢复)。
+                  backgroundMode: one-shot
+                  # v12(2026-09-26 撞名修复): 此处**禁止** modelSelectionSettings: true —
+                  # spawn 行(tool-subagent :877)已开同开关, 两实例在同一会话作用域
+                  # 各注册一次硬编码同名工具 list_subagent_models → 新建/打开会话
+                  # 全部炸 "already registered in this scope"(官方无改名出口)。
+                  # 起手默认模型如需固定, 用本行 config.agentOptions:{provider,model}
+                  # 静态路由(勿再开 modelSelectionSettings)。
+                  maxDepth: provider-managed
+              - id: workflow-ptc
+                name: '@deepseek-ai/dsh-workflow-ptc'
+                config:
+                  provider: spawn
+              - id: tool-workflow
+                name: '@deepseek-ai/dsh-tool-workflow'
+          - id: tool-ask-user
+            disabled: true
+            name: '@deepseek-ai/dsh-tool-ask-user'
+          - id: tool-todo
+            name: '@deepseek-ai/dsh-tool-todo'
+            config:
+              allowParallelInProgress: true
+          - id: tool-web
+            name: '@deepseek-ai/dsh-tool-web'
+            config:
+              fetch: true
+              searchTimeoutMs: 60000
+          - id: tool-cordis
+            name: '@deepseek-ai/dsh-tool-cordis'
+          - id: skill-filesystem
+            name: '@deepseek-ai/dsh-skill-filesystem'
+          - id: tool-skill
+            name: '@deepseek-ai/dsh-tool-skill'
+          - id: present
+            name: '@deepseek-ai/dsh-tool-present'
+          - id: tool-plugin-manager
+            name: '@deepseek-ai/dsh-plugin-manager/tools'
+            disabled: true # 子代理面无条件禁
+          - id: prompt-slim
+            name: 'dsh-depth-tool-gate/prompt-slim'
+          - id: role-brief
+            name: 'dsh-depth-tool-gate/role-briefs'
+            config:
+              brief: cordis-sub
+    - id: preset-dtg-shell
+      name: '@deepseek-ai/dsh-agent-preset'
+      config:
+        id: dtg-shell
+        name: '动态组装空壳(dtg-shell)'
+        description: 'dispatch_composed 专用空壳: 零工具行, 仅 persona/时间/压缩/skill 目录; 工具面由
+          dispatch_composed capabilities allow 名单全权组装。勿手选。'
+        order: 90
+        plugins:
+          - id: persona
+            name: '@deepseek-ai/dsh-persona'
+            config:
+              suffix: ''
+              prefix: >-
+                You are a coding agent powered by the {{model}} model.
+                你是动态组装子代理(dispatch_composed): 有效工具面=出生时 allow 名单(能力标签并集);
+                面外工具不可用, 缺工具在回执如实报告, 不虚构调用。通用铁律与岗位要点见注入的引导段。
+          - id: time-context
+            name: '@deepseek-ai/dsh-time-context'
+          - id: compaction
+            name: cordis:group
+            group: true
+            isolate:
+              compaction: true
+              toolResultPruner: true
+            config:
+              - id: compaction-basic
+                name: '@deepseek-ai/dsh-compaction-basic'
+              - id: command-compact
+                name: '@deepseek-ai/dsh-command-compact'
+              - id: tool-result-pruner
+                name: '@deepseek-ai/dsh-compaction-tool-result-pruner'
+                config:
+                  thresholdChars: 8192
+                  headChars: 4096
+                  tailChars: 1024
+          - id: skill-filesystem
+            name: '@deepseek-ai/dsh-skill-filesystem'
+          - id: tool-skill
+            name: '@deepseek-ai/dsh-tool-skill'
+          - id: prompt-slim
+            name: 'dsh-depth-tool-gate/prompt-slim'
+          - id: role-brief
+            name: 'dsh-depth-tool-gate/role-briefs'
+            config:
+              brief: dtg-shell
+
+    # ── preset-cordis-router: 路由者 Router·纯编排主会话 (dtg v0.6 实验批; 2026-11-08
+    # 由 router-probe 更名转正入 cordis 基座家族: cordis-deep=执行型 / cordis-sub=子代 /
+    # cordis-router=编排型) ─────────────────────────────────────────────────
+    # 定位: 零执行纯编排主会话——不挂任何执行类工具行(fs/bash/web/jobs 一概无),
+    # 只留派单系(delegation)+todo+生存件; 零执行纪律靠 brief 铁律(手开会话 depth=0
+    # 不归 dtg 裁剪管, 全局行 MCP 工具叠加可见属已知限制, 守纪律能力是实验观察点)。
+    # 入口: 新会话手选 preset「路由者 Router(纯编排)」; 建议选经济档模型(官方 Router
+    # 层即用轻模型)。
+    - id: preset-cordis-router
+      name: '@deepseek-ai/dsh-agent-preset'
+      config:
+        id: cordis-router
+        name: '路由者 Router(纯编排)'
+        description: '零执行纯编排主会话: 承接用户/判断分派/对外唯一出口, 不介入单任务内部拆解,
+          不亲自执行; 执行全走 Worker(子代理)。与 cordis-deep 互补(deep=执行型, router=编排型)。
+          面内仅派单系+todo+skill+压缩件, 零执行纪律靠 brief 铁律。'
+        order: 95
+        plugins:
+          - id: persona
+            name: '@deepseek-ai/dsh-persona'
+            config:
+              suffix: ''
+              prefix: >-
+                You are a coding agent powered by the {{model}} model.
+                你是路由者(Router): 承接用户、维护全局上下文、判断并分派任务、对外唯一出口; 单任务内部拆解与执行归
+                Worker(子代理)。纪律与选型目录见注入的引导段。
+          - id: role-brief
+            name: 'dsh-depth-tool-gate/role-briefs'
+            config:
+              brief: cordis-router
+          - id: time-context
+            name: '@deepseek-ai/dsh-time-context'
+          - id: compaction
+            name: cordis:group
+            group: true
+            isolate:
+              compaction: true
+              toolResultPruner: true
+            config:
+              - id: compaction-basic
+                name: '@deepseek-ai/dsh-compaction-basic'
+              - id: command-compact
+                name: '@deepseek-ai/dsh-command-compact'
+              - id: tool-result-pruner
+                name: '@deepseek-ai/dsh-compaction-tool-result-pruner'
+                config:
+                  thresholdChars: 8192
+                  headChars: 4096
+                  tailChars: 1024
+          - id: delegation
+            name: cordis:group
+            group: true
+            isolate:
+              workflowEngine: true
+            config:
+              - id: tool-subagent-control
+                name: '@deepseek-ai/dsh-tool-subagent-control'
+              - id: tool-subagent
+                name: '@deepseek-ai/dsh-tool-subagent'
+                config:
+                  agentPreset: cordis-sub
+                  provider: spawn
+                  toolName: subagent
+                  modelSelection: true
+                  modelDiscovery: true
+                  maxDepth: 12
+              - id: tool-subagent-fork
+                name: '@deepseek-ai/dsh-tool-subagent'
+                config:
+                  provider: fork
+                  toolName: subagent_fork
+                  maxDepth: 12
+              # workflow-ptc = workflowEngine 提供者(tool-workflow 的依赖,
+              # 缺此行则 tool-workflow 恒 broken waiting——cordis-sub 段同款配对)
+              - id: workflow-ptc
+                name: '@deepseek-ai/dsh-workflow-ptc'
+                config:
+                  provider: spawn
+              - id: tool-workflow
+                name: '@deepseek-ai/dsh-tool-workflow'
+          - id: tool-todo
+            name: '@deepseek-ai/dsh-tool-todo'
+            config:
+              allowParallelInProgress: true
+          - id: skill-filesystem
+            name: '@deepseek-ai/dsh-skill-filesystem'
+          - id: tool-skill
+            name: '@deepseek-ai/dsh-tool-skill'
+          - id: prompt-slim
+            name: 'dsh-depth-tool-gate/prompt-slim'

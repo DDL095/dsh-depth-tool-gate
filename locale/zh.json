@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "子代理工具面·闸门与组装台",
+    "description": "按角色裁剪子代理与主会话的工具面，拦截运行时新出现的工具，按能力标签动态组装最小工具面，并留下可审计台账。附 dtg-shell / cordis-sub / cordis-router 三个 preset。"
+  }
+}
