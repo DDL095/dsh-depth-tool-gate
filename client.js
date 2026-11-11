@@ -1,4 +1,4 @@
-/* depth-tool-gate client — 工具面治理面板(settings.section)
+/* dsh-depth-tool-gate client — 工具面治理面板(settings.section)
  * 通道: remote.depthToolGate(host 网关 depthToolGateGw), 剥 typert 信封 {ok,value}。
  *   保存写 depth-tool-gate.config.json(热读=保存即生效, 仅对之后创建/恢复的
  *   agent 生效, 运行中的会话不变)。
@@ -142,7 +142,7 @@ window.__ModuleLoader__.load({
 	function buildAdjudicationPrompt(names, snapLine) {
 		const items = names.map((n) => { const o = originOf(n); return "- " + n + "(来源: " + o[0] + (o[1] ? " | " + o[1] : "") + ")"; }).join("\n");
 		return [
-			"【dtg 工具裁决辅助】请解读以下工具, 并为 depth-tool-gate 面板给出裁决建议。",
+			"【dtg 工具裁决辅助】请解读以下工具, 并为 dsh-depth-tool-gate 面板给出裁决建议。",
 			"",
 			"工具清单:",
 			items,
@@ -693,7 +693,7 @@ window.__ModuleLoader__.load({
 			const resultOf = (m) => ({ mode: "strict", typeSymbol: "depthToolGate#" + m + ":result", schema: wide, create: () => wide });
 			const param = (name) => ({ name, wire: name, source: "json", codec: { mode: "strict", typeSymbol: "depthToolGate#" + name, schema: wide, create: () => wide } });
 			const disposeMount = await remote.$mount({
-				package: "depth-tool-gate",
+				package: "dsh-depth-tool-gate",
 				descriptors: [
 					{ id: "depthToolGate/status", service: "depthToolGateGw", namespace: "depthToolGate", method: "status", invocation: { kind: "direct" }, parameters: [], result: resultOf("status") },
 					{ id: "depthToolGate/save", service: "depthToolGateGw", namespace: "depthToolGate", method: "save", invocation: { kind: "direct" }, parameters: [param("payload")], result: resultOf("save") },
@@ -706,7 +706,7 @@ window.__ModuleLoader__.load({
 			});
 			/* typert direct 调用返回信封 {ok,value}; 剥一层 + 兼容已剥形状 */
 			const unwrap = (r) => (r && typeof r === "object" && r.value && typeof r.value === "object" ? r.value : r);
-			const withTimeout = (p, ms) => Promise.race([p, new Promise((_, rej) => setTimeout(() => rej(new Error("host 网关 15s 未响应(检查 depth-tool-gate 是否已挂载)")), ms || 15000))]);
+			const withTimeout = (p, ms) => Promise.race([p, new Promise((_, rej) => setTimeout(() => rej(new Error("host 网关 15s 未响应(检查 dsh-depth-tool-gate 是否已挂载)")), ms || 15000))]);
 			const listPresets = async () => {
 				if (!remote.agentPresets || typeof remote.agentPresets.list !== "function") throw new Error("remote.agentPresets.list 不可用");
 				const r = await withTimeout(remote.agentPresets.list());

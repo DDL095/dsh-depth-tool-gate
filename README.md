@@ -14,17 +14,17 @@
 
 **dsh-depth-tool-gate** is a governance plugin for [DeepSeek Harness](https://www.npmjs.com/package/@deepseek-ai/dsh) (DSH). It controls **which tools each agent can see** and **how much instruction text each agent carries** — at the host level, where it cannot be talked out of.
 
-A DSH subagent inherits the main session's entire tool catalog and the full global instruction set, whether it needs them or not. A "read these three papers" worker ends up holding image-generation, plugin-management, system-restart and scheduling tools it will never use — each one carrying a schema that is re-sent on every turn. depth-tool-gate cuts that down by policy, records what it did, and lets you audit the result.
+A DSH subagent inherits the main session's entire tool catalog and the full global instruction set, whether it needs them or not. A "read these three papers" worker ends up holding image-generation, plugin-management, system-restart and scheduling tools it will never use — each one carrying a schema that is re-sent on every turn. dsh-depth-tool-gate cuts that down by policy, records what it did, and lets you audit the result.
 
 > **Quick start** — DSH ≥ 0.2.2-rc.1, Node ≥ 24.9.0. In your DSH profile directory (`~/.dsh/profiles/web`): `npm i dsh-depth-tool-gate`, then **append** `"dsh-depth-tool-gate"` to the `dsh.profile.bundles` array in that profile's `package.json`, restart DSH, and open **Settings → Subagent Tool Surface**. Full steps and prerequisites: [Install](#install).
 
-**当前版本 v0.11.2** · 中文说明见 [下方](#中文说明) · 中文文档 `docs/*.md`
+**当前版本 v0.12.0** · 中文说明见 [下方](#中文说明) · 中文文档 `docs/*.md`
 
 ---
 
 ## The problem, concretely
 
-| | Without a gate | With depth-tool-gate |
+| | Without a gate | With dsh-depth-tool-gate |
 |---|---|---|
 | **Tool catalog** | Every subagent inherits the host's full global tool set — measured at 90 tools ≈ 33k tokens of schemas, re-sent every turn (measured on DSH 0.2.2-rc.1) | Each agent sees only what its role needs — the `reader` capability tag resolves to 8 tools, i.e. ≈29k tokens less per turn |
 | **New tools appearing** | A DSH upgrade or a newly installed plugin silently widens every subagent's surface | New tool names are held in a **pending gate** and blocked until you rule on them |
@@ -149,7 +149,7 @@ npm i dsh-depth-tool-gate
 ```jsonc
 {
   "dependencies": {
-    "dsh-depth-tool-gate": "^0.11.2"
+    "dsh-depth-tool-gate": "^0.12.0"
   },
   "dsh": {
     "profile": {
@@ -261,9 +261,9 @@ The briefs live **inside the installed package**, next to `role-briefs.mjs` — 
 
 ## 中文说明
 
-**depth-tool-gate** 是 [DeepSeek Harness](https://www.npmjs.com/package/@deepseek-ai/dsh)（DSH）的**工具面与提示预算治理插件**。
+**dsh-depth-tool-gate** 是 [DeepSeek Harness](https://www.npmjs.com/package/@deepseek-ai/dsh)（DSH）的**工具面与提示预算治理插件**。
 
-DSH 的子代理默认继承主会话的**全部工具**与**全部全局引导**：一个"读三篇论文"的干活代理，照样握着文生图、插件管理、系统重启、定时任务这些它永远不会用的工具 —— 每件工具的 schema 都要在**每一轮**重新发送一遍。depth-tool-gate 按策略把这些裁掉，并留下可查的账。
+DSH 的子代理默认继承主会话的**全部工具**与**全部全局引导**：一个"读三篇论文"的干活代理，照样握着文生图、插件管理、系统重启、定时任务这些它永远不会用的工具 —— 每件工具的 schema 都要在**每一轮**重新发送一遍。dsh-depth-tool-gate 按策略把这些裁掉，并留下可查的账。
 
 > **快速开始** —— 需 DSH ≥ 0.2.2-rc.1、Node ≥ 24.9.0。在你的 DSH profile 目录（`~/.dsh/profiles/web`）下执行 `npm i dsh-depth-tool-gate`，然后把 `"dsh-depth-tool-gate"` **追加**到该 profile `package.json` 的 `dsh.profile.bundles` 数组末尾，重启 DSH，打开 **设置 → 子代理工具面**。完整步骤与前置条件见 [Install](#install)。
 

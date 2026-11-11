@@ -1,4 +1,4 @@
-/* depth-tool-gate — 工具面负面清单闸(host 半)
+/* dsh-depth-tool-gate — 工具面负面清单闸(host 半)
  *
  * ── 目的 ─────────────────────────────────────────────────────────────────
  * 子代理默认继承宿主的全局工具全集与全部全局引导。一个只需要"读三个文件"的
@@ -79,7 +79,7 @@ const USAGE_BY_PRESET = new Map();
 	const USAGE_BY_SESSION = new Map(); /* [v0.11] sessionId → {id,preset,total,first,last,tools:Map}; cap 500 淘汰最旧 */
 const SCOPES = new Map();       /* agentId → createScope 句柄(restriction 随 scope fiber 存活, agent/disposed 回收) */
 
-export const name = "depth-tool-gate";
+export const name = "dsh-depth-tool-gate";
 /* inject 必须声明 "tools": ctx.tools.register 的属性访问路径强制要求注入该服务
  * (缺失时报 "cannot get property tools without inject"); ctx.get("tools") 是服务
  * 定位器可绕, 但工具注册走不了。tools 为 boot 早期核心服务, 注入无时序风险。 */
@@ -147,7 +147,7 @@ const AUDIT_DIR = join(DSH_HOME, "logs", "depth-tool-gate");
 		USAGE_DIRTY = 0; /* 失败也清标: 防同步热路径每调用重试风暴; 数据在内存 Map 不丢 */
 	}
 const AUDIT_PATH = join(AUDIT_DIR, "audit.jsonl");
-const NAME = "depth-tool-gate";
+const NAME = "dsh-depth-tool-gate";
 
 /* preset-scoped 组名: 由 preset 内 tool-subagent 行注册, 不在全局 restrictableNames
  * 内, tools.restrict() 够不着(0.2.1/0.2.2 实测)。深度由 maxDepth=12 总闸管。 */
@@ -710,7 +710,7 @@ const gateSvc = {
 					: (curCfg.capabilities && typeof curCfg.capabilities === "object" ? { capabilities: curCfg.capabilities } : {})),
 			};
 			mkdirSync(profileDir(), { recursive: true });
-			atomicWrite(CFG_PATH(), JSON.stringify({ _note: "子代理工具面负面清单(depth-tool-gate)。baseline=depth>0 全裁; preset_allow=按 preset 豁免; preset_extra_deny=按 preset 加裁; main_deny=depth0 主会话显式裁(保护集兜底); autoDenyNew=lock 新见工具默认拦截; capabilities=能力标签表(dispatch_composed 动态面, 存在则整体覆盖内置, 删键恢复内置)。保存即生效(仅之后创建的 agent)。", ...next }, null, 1));
+			atomicWrite(CFG_PATH(), JSON.stringify({ _note: "子代理工具面负面清单(dsh-depth-tool-gate)。baseline=depth>0 全裁; preset_allow=按 preset 豁免; preset_extra_deny=按 preset 加裁; main_deny=depth0 主会话显式裁(保护集兜底); autoDenyNew=lock 新见工具默认拦截; capabilities=能力标签表(dispatch_composed 动态面, 存在则整体覆盖内置, 删键恢复内置)。保存即生效(仅之后创建的 agent)。", ...next }, null, 1));
 			/* 裁决权威=config: 保存后把 baseline 全员在 lock 建/标 seen(消 pending,
 			 * 含此前不在 lock 的手动新加名——否则下个 syncLock 会误弹 pending) */
 			const lock = readLock(); const now = new Date().toISOString();
@@ -775,7 +775,7 @@ const gateSvc = {
 				cfg.baseline_deny = [...base];
 				cfg.enabled = cfg.enabled !== false; cfg.autoDenyNew = cfg.autoDenyNew !== false;
 				mkdirSync(profileDir(), { recursive: true });
-				atomicWrite(CFG_PATH(), JSON.stringify({ _note: "子代理工具面负面清单(depth-tool-gate)。baseline=depth>0 全裁; preset_allow=按 preset 豁免; preset_extra_deny=按 preset 加裁; main_deny=depth0 主会话显式裁(保护集兜底); autoDenyNew=lock 新见工具默认拦截。保存即生效(仅之后创建的 agent)。", ...cfg }, null, 1));
+				atomicWrite(CFG_PATH(), JSON.stringify({ _note: "子代理工具面负面清单(dsh-depth-tool-gate)。baseline=depth>0 全裁; preset_allow=按 preset 豁免; preset_extra_deny=按 preset 加裁; main_deny=depth0 主会话显式裁(保护集兜底); autoDenyNew=lock 新见工具默认拦截。保存即生效(仅之后创建的 agent)。", ...cfg }, null, 1));
 			} else {
 				const base = new Set(Array.isArray(cfg.baseline_deny) ? cfg.baseline_deny : DEFAULT_BASELINE);
 				const clash = list.filter((n) => base.has(n));
@@ -848,9 +848,9 @@ USAGE_TOTAL.set(name, (USAGE_TOTAL.get(name) || 0) + 1);
 			} catch { /* 采集绝不影响主流程 */ }
 		});
 		return () => { try { off?.(); } catch { /* noop */ } };
-	}, "depth-tool-gate.usageCollector()");
+	}, "dsh-depth-tool-gate.usageCollector()");
 	try { TOOLS = ctx.get("tools"); } catch (e) { warn("ctx.get(tools) 失败(插件空转, 不影响宿主): " + String((e && e.message) || e)); TOOLS = null; }
-	ctx.effect(() => ctx.provide("depthToolGate", gateSvc), "depth-tool-gate.provideSvc()");
+	ctx.effect(() => ctx.provide("depthToolGate", gateSvc), "dsh-depth-tool-gate.provideSvc()");
 
 	/* ⑤ list_agent_presets: preset 能力目录(运行时注册表权威)——主会话按任务
 	 *    选型 subagent preset 的枚举入口, 替代三代必漂移的文档清单。只读。 */
@@ -867,7 +867,7 @@ USAGE_TOTAL.set(name, (USAGE_TOTAL.get(name) || 0) + 1);
 						try {
 							const rows = (typeof value === "string" ? JSON.parse(value) : value)?.presets || [];
 							return [{ type: "text", text: ["[agent preset 注册表] " + rows.length + " 个:", ...rows.map((p) => `  ${p.isDefault ? "★" : "·"} ${p.id}${p.name ? " — " + p.name : ""}${p.description ? "\n      " + p.description : ""}${p.broken ? "\n      ⚠broken: " + p.broken : ""}`)].join("\n") }];
-						} catch (e) { return [{ type: "text", text: "[depth-tool-gate] preset render 失败: " + String(e) }]; }
+						} catch (e) { return [{ type: "text", text: "[dsh-depth-tool-gate] preset render 失败: " + String(e) }]; }
 					},
 				},
 				async execute() {
@@ -898,7 +898,7 @@ USAGE_TOTAL.set(name, (USAGE_TOTAL.get(name) || 0) + 1);
 			log("list_agent_presets 工具已注册(preset 能力目录)");
 			return () => { try { reg?.dispose?.(); } catch { /* noop */ } };
 		} catch (e) { warn("list_agent_presets 注册失败(枚举不可用, 裁剪不受影响): " + String((e && e.message) || e)); return () => {}; }
-	}, "depth-tool-gate.presetLister()");
+	}, "dsh-depth-tool-gate.presetLister()");
 
 	/* ⑪ [v0.9] explain_gate: 只读诊断——解释当前 agent 的工具面治理状态
 	 * (可见数/被裁名单+原因归因: baseline/main_deny/preset deny/lock pending)。
@@ -965,7 +965,7 @@ USAGE_TOTAL.set(name, (USAGE_TOTAL.get(name) || 0) + 1);
 			log("explain_gate 工具已注册(工具面只读诊断)");
 			return () => { try { reg?.dispose?.(); } catch { /* noop */ } };
 		} catch (e) { warn("explain_gate 注册失败: " + String((e && e.message) || e)); return () => {}; }
-	}, "depth-tool-gate.explainGate()");
+	}, "dsh-depth-tool-gate.explainGate()");
 
 	/* ⑨ [v0.4.2] dispatch_composed: 动态工具面组装派单(wrapper 工具)。
 	 *    流程: 标签→allow 并集 → reserved childId 预挂 PENDING_CAPS →
@@ -1001,7 +1001,7 @@ USAGE_TOTAL.set(name, (USAGE_TOTAL.get(name) || 0) + 1);
 							/* 超长兜底: 全文落盘, 回执带路径(信息能力不因截断丢失) */
 							let spill = "";
 							try {
-								const dir = join(DSH_HOME, "logs", "depth-tool-gate", "spill");
+								const dir = join(DSH_HOME, "logs", "dsh-depth-tool-gate", "spill");
 								mkdirSync(dir, { recursive: true });
 								const file = join(dir, `composed-reply-${Date.now()}.md`);
 								writeFileSync(file, full, "utf8");
@@ -1014,7 +1014,7 @@ USAGE_TOTAL.set(name, (USAGE_TOTAL.get(name) || 0) + 1);
 				async execute(args, exec) {
 					try {
 						const cfg = readConfig();
-						if (cfg && cfg.enabled === false) return { ok: false, error: "depth-tool-gate 已禁用" };
+						if (cfg && cfg.enabled === false) return { ok: false, error: "dsh-depth-tool-gate 已禁用" };
 						const capsTable = (cfg?.capabilities && typeof cfg.capabilities === "object" && Object.keys(cfg.capabilities).length) ? cfg.capabilities : DEFAULT_CAPABILITIES;
 						const tags = Array.isArray(args?.capabilities) ? args.capabilities.map(String).filter(Boolean) : [];
 						const extraTools = Array.isArray(args?.tools) ? args.tools.map(String).filter(Boolean) : [];
@@ -1089,7 +1089,7 @@ USAGE_TOTAL.set(name, (USAGE_TOTAL.get(name) || 0) + 1);
 			log("dispatch_composed 工具已注册(动态工具面组装)");
 			return () => { try { reg?.dispose?.(); } catch { /* noop */ } };
 		} catch (e) { warn("dispatch_composed 注册失败(动态组装不可用, 裁剪不受影响): " + String((e && e.message) || e)); return () => {}; }
-	}, "depth-tool-gate.composedDispatcher()");
+	}, "dsh-depth-tool-gate.composedDispatcher()");
 
 	/* goal 全周期守护自动化: 主会话 scope 注册同名 create_goal(shadow
 	 * 全局官方版), 创建后自动写 armed-goals.json(durable 白名单)——免去手动
@@ -1171,7 +1171,7 @@ USAGE_TOTAL.set(name, (USAGE_TOTAL.get(name) || 0) + 1);
 			log("create_goal 自动化已注册(durable 白名单自动登记)");
 			return () => { try { reg?.dispose?.(); } catch { /* noop */ } };
 		} catch (e) { warn("create_goal 自动化注册失败(goal 创建不受影响): " + String((e && e.message) || e)); return () => {}; }
-	}, "depth-tool-gate.goalAutoDurable()");
+	}, "dsh-depth-tool-gate.goalAutoDurable()");
 
 	/* PENDING_CAPS 清扫(R4): 周期回收 TTL 过期条目(spawn 失败/abort 残留) */
 	ctx.effect(() => {
@@ -1180,7 +1180,7 @@ USAGE_TOTAL.set(name, (USAGE_TOTAL.get(name) || 0) + 1);
 			for (const [k, v] of PENDING_CAPS) if (v?.expires < now) PENDING_CAPS.delete(k);
 		}, CAP_TTL_MS);
 		return () => { clearInterval(timer); PENDING_CAPS.clear(); };
-	}, "depth-tool-gate.capSweeper()");
+	}, "dsh-depth-tool-gate.capSweeper()");
 
 	/* 主监听: agent/created = 任何 agent 诞生(新建/resume/spawn/fork/member) */
 	ctx.effect(() => {
@@ -1193,7 +1193,7 @@ USAGE_TOTAL.set(name, (USAGE_TOTAL.get(name) || 0) + 1);
 		});
 		log("agent/created 监听已挂(负面清单裁剪, 仅 depth>0; agent/disposed 回收 scope)");
 		return () => {};
-	}, "depth-tool-gate.onCreated");
+	}, "dsh-depth-tool-gate.onCreated");
 
 	/* 面板数据面网关 */
 	ctx.effect(() => {
@@ -1223,8 +1223,8 @@ USAGE_TOTAL.set(name, (USAGE_TOTAL.get(name) || 0) + 1);
 			log("remote 网关已挂载(depthToolGate → ctx.remote.depthToolGate)");
 			return () => { try { if (typeof gw.dispose === "function") gw.dispose(); } catch { /* noop */ } };
 		} catch (e) {
-			console.error("[depth-tool-gate] 网关挂载失败(面板不可用, 裁剪本体不受影响):", e);
+			console.error("[dsh-depth-tool-gate] 网关挂载失败(面板不可用, 裁剪本体不受影响):", e);
 			return () => {};
 		}
-	}, "depth-tool-gate.gateway");
+	}, "dsh-depth-tool-gate.gateway");
 }

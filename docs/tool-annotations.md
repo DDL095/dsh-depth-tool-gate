@@ -1,7 +1,7 @@
-# depth-tool-gate 工具注释全书（tool-annotations）
+# dsh-depth-tool-gate 工具注释全书（tool-annotations）
 
 > **用途**：子代理工具面每个工具的详尽注释——来源（谁引入）、作用、典型误用、子代理场景开关建议与理由。是「子代理工具面」面板两栏与闸门裁决的查阅手册。
-> **口径**：快照 2026-11-10（DSH 0.2.2-rc.1，depth-tool-gate v0.11）。运行时权威=面板「未裁决工具」栏（实时 restrictableNames）；**v0.11 起面板只显示客观一句简表，叙事/裁决理由全文在本册**（本册负责"为什么"，面板负责"是什么"）。新工具由 lock 闸门拦截后回填本册。
+> **口径**：快照 2026-11-10（DSH 0.2.2-rc.1，dsh-depth-tool-gate v0.11）。运行时权威=面板「未裁决工具」栏（实时 restrictableNames）；**v0.11 起面板只显示客观一句简表，叙事/裁决理由全文在本册**（本册负责"为什么"，面板负责"是什么"）。新工具由 lock 闸门拦截后回填本册。
 > **裁决体系**：`baseline_deny`（子代全局底线）→ `preset_allow`/`preset_extra_deny`（子代按角色）→ `main_deny` + `main_preset_extra_deny`/`main_preset_allow`（主会话层与手开 preset 会话）→ lock pending（新见预拦）→ forced（preset-scoped，restrict 不可达，maxDepth 总闸管辖）。
 > **开关建议图例**：🚫=子代理禁（在 deny）/✅=子代理可用（保留）/⚖️=看角色（preset 级裁量）。
 
@@ -117,7 +117,7 @@
 | `preset_dispatch` | 平级子会话外送（preset 必填） | 🚫 baseline | 平级外送是主会话职权；foreman 类确需时 preset_allow 豁免 |
 | `preset_send_message` | 平级子会话续聊 | 🚫 baseline | 同上 |
 
-### 2.6 depth-tool-gate 自身
+### 2.6 dsh-depth-tool-gate 自身
 
 | 工具 | 作用 | 子代理 | 理由 |
 |---|---|---|---|

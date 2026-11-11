@@ -1,5 +1,5 @@
-# depth-tool-gate bundle patch
-# 自包含清单: ① depth-tool-gate 插件行(host.v2.mjs + client.js 设置面板)
+# dsh-depth-tool-gate bundle patch
+# 自包含清单: ① dsh-depth-tool-gate 插件行(host.v2.mjs + client.js 设置面板)
 #            ② preset-cordis-sub(通用子代面)
 #            ③ preset-dtg-shell(动态组装空壳——dispatch_composed 的必需配套)
 #            ④ preset-cordis-router(纯编排主会话, 可选配套)

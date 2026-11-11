@@ -1,6 +1,6 @@
 # agent-faq — dtg 机制问答（agent 侧双通道）
 
-> 面向 AI agent 的机制速查：读完本文即可回答关于 depth-tool-gate 的常见问题，并知道去哪查证。
+> 面向 AI agent 的机制速查：读完本文即可回答关于 dsh-depth-tool-gate 的常见问题，并知道去哪查证。
 > 人类向手册见 [panel-guide.md](./panel-guide.md)；字段字典见 [audit-schema.md](./audit-schema.md)。
 
 ## Q1: dtg 是什么？裁什么？

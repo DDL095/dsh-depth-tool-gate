@@ -19,7 +19,7 @@
  *   working-directory 动态 context、persona/time-context 等行集自带段。
  *
  * 挂载: dtg-shell / cordis-sub / sci-lite 三 preset 的 plugins 行(file:// 直指仓内,
- * bundle link 形态=改仓内即生效; 详见 depth-tool-gate/README 部署节)。 */
+ * bundle link 形态=改仓内即生效; 详见 dsh-depth-tool-gate/README 部署节)。 */
 export const name = "dtg-prompt-slim";
 export const inject = ["systemPrompt"];
 

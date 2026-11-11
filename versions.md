@@ -2,6 +2,16 @@
 
 > 最新版本在前。版本号单一权威源 = `package.json`。条目中的 commit hash 是可校验的锚点。
 
+## v0.12.0 (2026-11-11) —— 包名统一批（破坏性）
+
+开发态包名由 `depth-tool-gate` 改为 `dsh-depth-tool-gate`，与 npm 发布名、GitHub 仓名三者统一为单一身份（与 `dsh-moa-native` 同范式），不再依赖导出器做身份改写。
+
+- **改名范围**：标识符类 55 处 / 14 文件 —— `package.json` 的 `name`、宿主的 `export const name`、bundle patch 的插件行 `name` 与 8 处行内模块引用、客户端模块 id 与面板注册 id、文档与脚本内的包名引用；
+- **刻意不改的两类**：插件 id 保持 `depth-tool-gate`（它是 patch 内部键、台账标识与服务名，与包名无关，改了会断掉既有台账的连续性）；运行时数据文件名保持 `depth-tool-gate.config.json` / `.lock.json` / `.usage.json` 与 `logs/depth-tool-gate/`（只有本插件读写，改名会丢掉既有策略配置、闸门状态与历史审计流水）；
+- **安装方式变化**：profile 的 `package.json` 依赖键与 `dsh.profile.bundles` 条目名须一并改为 `dsh-depth-tool-gate`，`node_modules` 下的链接目录名同步改名（加载器按**包名**解析，目录名与包名不一致会装载失败）；
+- **导出器适配**：发布态改写步骤由"旧名→新名"改为幂等保险（两态同名后本就是空操作），断言链改为按插件 id 匹配；
+- **文档修正**：`docs/panel-guide.md` 的主会话保护集件数由 19 更正为 18（代码实数）。
+
 ## v0.11.2 (2026-11-11) —— 发布就绪批
 
 发布审计后的修复与发布链路重建:
@@ -125,7 +135,7 @@
 - **literature-lead 标签**: 23 件=文献检索 22+派单权(检索面 foreman 化);
 - **AGENTS.md 入档**: 「拉起组合速查」补 dispatch_composed 第四通道(临时最小工具面);
 - **通俗文档**: docs/biomedical-analogy.md(生物医学类比——器材管理/临时实验台/带教/记录本);
-- **名称定案**: 保留包名 depth-tool-gate, 面板中文标题扩为「子代理工具面·闸门与组装台」;
+- **名称定案**: 保留包名 dsh-depth-tool-gate, 面板中文标题扩为「子代理工具面·闸门与组装台」;
 - **生产冒烟**(2026-11-08 11:45 北京, 进程 11:34:24 加载): literature-lead 面 23 精确
   (审计 dc-15ad5f79: allowed=17+补挂6→visibleAfter=23), 检索工具+zotero 实调+派单权
   全在手 ✓; Tab5 渲染待用户刷新页面确认(数据通路=default_capabilities 已随 status 返回);

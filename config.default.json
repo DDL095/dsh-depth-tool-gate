@@ -1,5 +1,5 @@
 {
-  "_note": "子代理工具面负面清单(depth-tool-gate)。baseline=depth>0 全裁; preset_allow=按 preset 豁免; preset_extra_deny=按 preset 加裁; main_deny=depth0 主会话显式裁(保护集兜底); autoDenyNew=lock 新见工具默认拦截; capabilities=能力标签表(dispatch_composed 动态面, 存在则整体覆盖内置, 删键恢复内置)。本文件的 baseline_deny 与 host 内置 DEFAULT_BASELINE 同源同值(由内置表生成); 缺省策略=host 内置表, 面板保存以本文件为准。保存即生效(仅之后创建的 agent)。",
+  "_note": "子代理工具面负面清单(dsh-depth-tool-gate)。baseline=depth>0 全裁; preset_allow=按 preset 豁免; preset_extra_deny=按 preset 加裁; main_deny=depth0 主会话显式裁(保护集兜底); autoDenyNew=lock 新见工具默认拦截; capabilities=能力标签表(dispatch_composed 动态面, 存在则整体覆盖内置, 删键恢复内置)。本文件的 baseline_deny 与 host 内置 DEFAULT_BASELINE 同源同值(由内置表生成); 缺省策略=host 内置表, 面板保存以本文件为准。保存即生效(仅之后创建的 agent)。",
   "enabled": true,
   "preset_allow": {},
   "preset_extra_deny": {},

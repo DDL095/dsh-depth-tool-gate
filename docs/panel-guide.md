@@ -1,6 +1,6 @@
 # panel-guide — 设置页面板逐 Tab 手册（v0.11, 7 Tab）
 
-入口：设置 → 子代理工具面（depth-tool-gate）。顶栏：enabled 总开关 / autoDenyNew 新工具默认拦截 / 保存（热生效，仅之后创建/恢复的 agent；运行中会话不变）/ 刷新。所有时间显示为用户本地时区（存储恒为 UTC ISO）。
+入口：设置 → 子代理工具面（dsh-depth-tool-gate）。顶栏：enabled 总开关 / autoDenyNew 新工具默认拦截 / 保存（热生效，仅之后创建/恢复的 agent；运行中会话不变）/ 刷新。所有时间显示为用户本地时区（存储恒为 UTC ISO）。
 
 | Tab | 名 | 内容与操作 |
 |---|---|---|
@@ -12,4 +12,4 @@
 | 6 | 📜 裁剪台账 (v0.11 白话化) | 每行=一个会话/子代理诞生时的裁剪快照；**红色 ev 行=治理事件**（lock-corrupt/config-corrupt/gate-error/role-brief-missing 及错误摘要）；列头白话（时间本地/会话/深度/角色或事件/禁用/pending/裁后可见/缺名或错误） |
 | 7 | 🚦 闸门与发现 (v0.11 白话化+归因) | 白话说明（只盯新工具）；pending 四键（🚫子代理禁/🧭主会话禁/🔍解读/✅放行）；**名单失效件逐件归因表**（域会话专属 MCP/来源停用可复装/疑改名 三态）；🔒作用域外名单；lock 原始 JSON |
 
-保存语义：全部写 `depth-tool-gate.config.json`（host 热读）——**仅对之后创建/恢复的 agent 生效**（恢复会话重新过 agent/created 闸），运行中会话不动。main_deny 保护集 19 件由 host status 下发（单一权威源，客户端镜像仅回退兜底）。
+保存语义：全部写 `depth-tool-gate.config.json`（host 热读）——**仅对之后创建/恢复的 agent 生效**（恢复会话重新过 agent/created 闸），运行中会话不动。main_deny 保护集 18 件由 host status 下发（单一权威源，客户端镜像仅回退兜底）。
