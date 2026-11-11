@@ -1,6 +1,6 @@
 # 域子代通用铁律
 
-> 本段由 depth-tool-gate 的 role-briefs 模块注入域子代会话(与角色专属引导拼接);
+> 本段由 dsh-depth-tool-gate 的 role-briefs 模块注入域子代会话(与角色专属引导拼接);
 > 主会话读完整版 ~/.dsh/AGENTS.md, 域子代只读本最小集 + 角色专属段。
 > 条目从完整版中只保留对无人值守执行者普适的最小集。
 
