@@ -30,7 +30,12 @@ export function renderComposed(value, opts = {}) {
 		const one = (d) => {
 			const cap = (d?.capabilities || []).join("+") || "custom";
 			const extra = d?.toolsExtra ? `+直传${d.toolsExtra}件` : "";
-			const line = `[dispatch_composed ${d?.ok === false ? "✗" : "✓"}] 面=${cap}${extra} allow=${d?.allowed ?? "-"}${d?.droppedUnknown ? ` 丢弃未知=${d.droppedUnknown}` : ""}${d?.childId ? ` id=${d.childId}` : ""}${d?.label ? ` 标签=${d.label}` : ""}`;
+			/* [v0.13.3] 成败判定: 有 error ⇒ 失败(✗)。子项不带 ok 字段是刻意的
+			 * (不给显示目的污染数据形状), 所以判定顺序是: 显式 ok=false ⇒ ✗;
+			 * 否则有 error ⇒ ✗; 否则 ✓。旧形态只判 ok===false, 导致
+			 * 「✓ 失败: spawn 失败」自相矛盾。 */
+			const failed = d?.ok === false || (d?.ok === undefined && d?.error !== undefined && d?.error !== null);
+			const line = `[dispatch_composed ${failed ? "✗" : "✓"}] 面=${cap}${extra} allow=${d?.allowed ?? "-"}${d?.droppedUnknown ? ` 丢弃未知=${d.droppedUnknown}` : ""}${d?.childId ? ` id=${d.childId}` : ""}${d?.label ? ` 标签=${d.label}` : ""}`;
 			return d?.error ? `${line}\n错误: ${d.error}` : line;
 		};
 		if (v?.error) return [{ type: "text", text: `[dispatch_composed ✗] 错误: ${v.error}` }];
