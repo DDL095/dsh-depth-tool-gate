@@ -1,0 +1,223 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="980" height="760" viewBox="0 0 980 760" font-family="'Segoe UI','Microsoft YaHei',sans-serif">
+  <title>dsh-depth-tool-gate - 子代理创建瞬间的闸门流程图</title>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#141b26"/>
+      <stop offset="1" stop-color="#1c2634"/>
+    </linearGradient>
+    <marker id="m-steel" viewBox="0 0 10 10" refX="10" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+      <path d="M0,0 L10,5 L0,10 Z" fill="#7e93ad"/>
+    </marker>
+    <marker id="m-violet" viewBox="0 0 10 10" refX="10" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+      <path d="M0,0 L10,5 L0,10 Z" fill="#8b9cff"/>
+    </marker>
+    <marker id="m-peri" viewBox="0 0 10 10" refX="10" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+      <path d="M0,0 L10,5 L0,10 Z" fill="#7c9cf5"/>
+    </marker>
+    <marker id="m-green" viewBox="0 0 10 10" refX="10" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+      <path d="M0,0 L10,5 L0,10 Z" fill="#34d399"/>
+    </marker>
+    <marker id="m-amber" viewBox="0 0 10 10" refX="10" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+      <path d="M0,0 L10,5 L0,10 Z" fill="#f0b429"/>
+    </marker>
+    <marker id="m-teal" viewBox="0 0 10 10" refX="10" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+      <path d="M0,0 L10,5 L0,10 Z" fill="#8fb4b8"/>
+    </marker>
+  </defs>
+
+  <rect x="0" y="0" width="980" height="760" fill="url(#bg)"/>
+  <rect x="8" y="8" width="964" height="744" rx="14" fill="none" stroke="#2b3648" stroke-width="1.2"/>
+
+  <text x="22" y="34" font-size="17" font-weight="700" fill="#e8eefc">dsh-depth-tool-gate</text>
+  <text x="22" y="52" font-size="10.5" fill="#8fa3c0">what the host plugin does the moment a subagent is created</text>
+  <text x="950" y="34" text-anchor="end" font-size="10.5" fill="#8fa3c0">host-side plugin - agent/created listener</text>
+
+  <!-- input event -->
+  <rect x="12" y="58" width="198" height="58" rx="10" fill="#16202f" stroke="#6b8bb5" stroke-width="1.6"/>
+  <text x="111" y="84" text-anchor="middle" font-size="13" font-weight="700" fill="#dbe7fb">agent/created event</text>
+  <text x="111" y="102" text-anchor="middle" font-size="9.5" fill="#8fa3c0">host fires it when a child is spawned</text>
+  <path d="M210,87 H250" fill="none" stroke="#7e93ad" stroke-width="1.8" marker-end="url(#m-steel)"/>
+
+  <!-- step 1 -->
+  <rect x="254" y="58" width="386" height="72" rx="10" fill="#1b2637" stroke="#8ea6c6" stroke-width="2"/>
+  <circle cx="274" cy="78" r="10" fill="#2b3a52" stroke="#8ea6c6" stroke-width="1.2"/>
+  <text x="274" y="82" text-anchor="middle" font-size="11" font-weight="700" fill="#dce8f7">1</text>
+  <text x="462" y="88" text-anchor="middle" font-size="14.5" font-weight="700" fill="#eaf1fb">compute effective deny set</text>
+  <text x="462" y="108" text-anchor="middle" font-size="10" fill="#9fb0c7">six policy lists + pending names, intersected with the runtime</text>
+
+  <!-- six policy lists -->
+  <rect x="12" y="150" width="214" height="302" rx="10" fill="#1a2038" stroke="#8b9cff" stroke-width="1.6"/>
+  <text x="26" y="174" font-size="12.5" font-weight="700" fill="#c8d2ff">six policy lists</text>
+  <rect x="24" y="180" width="70" height="2" rx="1" fill="#8b9cff"/>
+
+  <rect x="22" y="197" width="12" height="12" rx="3" fill="#8b9cff"/>
+  <text x="40" y="207" font-size="10" font-weight="700" fill="#e3e9ff">baseline_deny</text>
+  <text x="40" y="220" font-size="9" fill="#94a3c9">the floor for every subagent</text>
+
+  <rect x="22" y="241" width="12" height="12" rx="3" fill="#a78bfa"/>
+  <text x="40" y="251" font-size="10" font-weight="700" fill="#e3e9ff">preset_extra_deny[role]</text>
+  <text x="40" y="264" font-size="9" fill="#94a3c9">extra denies for one role</text>
+
+  <rect x="22" y="285" width="12" height="12" rx="3" fill="#60a5fa"/>
+  <text x="40" y="295" font-size="10" font-weight="700" fill="#e3e9ff">preset_allow[role]</text>
+  <text x="40" y="308" font-size="9" fill="#94a3c9">exemption, or keep-only per preset</text>
+
+  <rect x="22" y="329" width="12" height="12" rx="3" fill="#818cf8"/>
+  <text x="40" y="339" font-size="10" font-weight="700" fill="#e3e9ff">main_deny</text>
+  <text x="40" y="352" font-size="9" fill="#94a3c9">main session only</text>
+
+  <rect x="22" y="373" width="12" height="12" rx="3" fill="#c084fc"/>
+  <text x="40" y="383" font-size="10" font-weight="700" fill="#e3e9ff">main_preset_extra_deny[preset]</text>
+  <text x="40" y="396" font-size="9" fill="#94a3c9">main session, per preset</text>
+
+  <rect x="22" y="417" width="12" height="12" rx="3" fill="#7dd3fc"/>
+  <text x="40" y="427" font-size="10" font-weight="700" fill="#e3e9ff">main_preset_allow[preset]</text>
+  <text x="40" y="440" font-size="9" fill="#94a3c9">main session, keep-only</text>
+
+  <path d="M226,166 H240 V112 H252" fill="none" stroke="#8b9cff" stroke-width="1.8" marker-end="url(#m-violet)"/>
+  <text x="230" y="184" font-size="8.5" fill="#8b9cff">read</text>
+
+  <text x="12" y="470" font-size="8.5" fill="#7f90a8">config: depth-tool-gate.config.json</text>
+  <text x="12" y="486" font-size="8.5" fill="#7f90a8">hot-read - only agents created after a change get it</text>
+  <text x="12" y="502" font-size="8.5" fill="#7f90a8">lock: depth-tool-gate.lock.json</text>
+
+  <!-- step 2 : decision -->
+  <path d="M447,130 V192" fill="none" stroke="#7e93ad" stroke-width="1.8" marker-end="url(#m-steel)"/>
+  <path d="M447,196 L592,256 L447,316 L302,256 Z" fill="#22304a" stroke="#93a7c4" stroke-width="2"/>
+  <circle cx="447" cy="212" r="9.5" fill="#2b3a52" stroke="#93a7c4" stroke-width="1.2"/>
+  <text x="447" y="216" text-anchor="middle" font-size="10.5" font-weight="700" fill="#dbe7f7">2</text>
+  <text x="447" y="250" text-anchor="middle" font-size="12.5" font-weight="700" fill="#eef4fc">preset mounts role-briefs?</text>
+  <text x="447" y="266" text-anchor="middle" font-size="9.5" fill="#9fb0c7">reads the preset row of this agent</text>
+
+  <!-- yes branch : keep-only -->
+  <path d="M302,256 L324,336" fill="none" stroke="#7e93ad" stroke-width="1.8" marker-end="url(#m-steel)"/>
+  <text x="290" y="292" text-anchor="end" font-size="9.5" fill="#a9bad0">yes</text>
+  <rect x="254" y="340" width="140" height="96" rx="10" fill="#1e2440" stroke="#a78bfa" stroke-width="1.8"/>
+  <text x="324" y="364" text-anchor="middle" font-size="13" font-weight="700" fill="#e4d8ff">keep-only</text>
+  <text x="324" y="382" text-anchor="middle" font-size="9.5" fill="#b9b3e8">preset_allow as</text>
+  <text x="324" y="396" text-anchor="middle" font-size="9.5" fill="#b9b3e8">keep-only list</text>
+  <text x="324" y="416" text-anchor="middle" font-size="9" fill="#b9b3e8">surface = that</text>
+  <text x="324" y="430" text-anchor="middle" font-size="9" fill="#b9b3e8">list only</text>
+
+  <!-- no branch : exemption -->
+  <path d="M592,256 L632,336" fill="none" stroke="#7e93ad" stroke-width="1.8" marker-end="url(#m-steel)"/>
+  <text x="606" y="292" font-size="9.5" fill="#a9bad0">no</text>
+  <rect x="562" y="340" width="140" height="96" rx="10" fill="#1b2740" stroke="#6f93c9" stroke-width="1.8"/>
+  <text x="632" y="364" text-anchor="middle" font-size="13" font-weight="700" fill="#dbe7fb">exemption</text>
+  <text x="632" y="382" text-anchor="middle" font-size="9" fill="#a8bcd6">baseline_deny</text>
+  <text x="632" y="395" text-anchor="middle" font-size="9" fill="#a8bcd6">+ pending</text>
+  <text x="632" y="408" text-anchor="middle" font-size="9" fill="#a8bcd6">- preset_allow[role]</text>
+  <text x="632" y="421" text-anchor="middle" font-size="9" fill="#a8bcd6">+ preset_extra_deny</text>
+  <text x="632" y="432" text-anchor="middle" font-size="8" fill="#7f95b4">plain subagent</text>
+
+  <!-- step 3 : three actions -->
+  <path d="M324,436 V466" fill="none" stroke="#7c9cf5" stroke-width="1.8" marker-end="url(#m-peri)"/>
+  <path d="M632,436 V466" fill="none" stroke="#34d399" stroke-width="1.8" marker-end="url(#m-green)"/>
+  <path d="M447,318 L478,464" fill="none" stroke="#8b9cff" stroke-width="1.6" stroke-dasharray="6 4" marker-end="url(#m-violet)"/>
+  <text x="490" y="446" font-size="8.5" fill="#8b9cff">prompt-slim: same preset row</text>
+
+  <rect x="254" y="470" width="140" height="80" rx="10" fill="#1c2340" stroke="#7c9cf5" stroke-width="1.8"/>
+  <circle cx="270" cy="486" r="9" fill="#28304f" stroke="#7c9cf5" stroke-width="1.2"/>
+  <text x="270" y="490" text-anchor="middle" font-size="10" font-weight="700" fill="#d5deff">3</text>
+  <text x="324" y="500" text-anchor="middle" font-size="11" font-weight="700" fill="#e3e8ff">role-briefs inject</text>
+  <text x="324" y="520" text-anchor="middle" font-size="9" fill="#a8b0d8">_common.md + &lt;role&gt;.md</text>
+  <text x="324" y="538" text-anchor="middle" font-size="9" fill="#8f97c4">1.8-3.4 KB injected</text>
+
+  <rect x="408" y="470" width="140" height="80" rx="10" fill="#1c2340" stroke="#8b9cff" stroke-width="1.8"/>
+  <circle cx="424" cy="486" r="9" fill="#28304f" stroke="#8b9cff" stroke-width="1.2"/>
+  <text x="424" y="490" text-anchor="middle" font-size="10" font-weight="700" fill="#d5deff">3</text>
+  <text x="478" y="500" text-anchor="middle" font-size="11.5" font-weight="700" fill="#e3e8ff">prompt-slim mask</text>
+  <text x="478" y="520" text-anchor="middle" font-size="9" fill="#a8b0d8">drop dead sections</text>
+  <text x="478" y="538" text-anchor="middle" font-size="8.5" fill="#8f97c4">masked by preset row</text>
+
+  <rect x="562" y="470" width="140" height="80" rx="10" fill="#10281f" stroke="#34d399" stroke-width="1.8"/>
+  <circle cx="578" cy="486" r="9" fill="#17402f" stroke="#34d399" stroke-width="1.2"/>
+  <text x="578" y="490" text-anchor="middle" font-size="10" font-weight="700" fill="#bdf5dd">3</text>
+  <text x="632" y="502" text-anchor="middle" font-size="12" font-weight="700" fill="#d9fbe9">tools.restrict()</text>
+  <rect x="585" y="509" width="84" height="17" rx="6" fill="#17402f" stroke="#2f8f6c" stroke-width="1"/>
+  <text x="627" y="521" text-anchor="middle" font-size="9" fill="#8ff0c4">host API</text>
+  <text x="632" y="541" text-anchor="middle" font-size="9" fill="#7fbda3">deny set or allow list</text>
+
+  <!-- step 4 -->
+  <path d="M324,550 V576" fill="none" stroke="#7c9cf5" stroke-width="1.8" marker-end="url(#m-peri)"/>
+  <path d="M478,550 V576" fill="none" stroke="#8b9cff" stroke-width="1.8" marker-end="url(#m-violet)"/>
+  <path d="M632,550 V576" fill="none" stroke="#34d399" stroke-width="1.8" marker-end="url(#m-green)"/>
+
+  <rect x="254" y="580" width="406" height="88" rx="10" fill="#243447" stroke="#cbd5e1" stroke-width="2"/>
+  <circle cx="274" cy="598" r="9" fill="#33475f" stroke="#cbd5e1" stroke-width="1.2"/>
+  <text x="274" y="602" text-anchor="middle" font-size="10" font-weight="700" fill="#eef4fa">4</text>
+  <text x="465" y="610" text-anchor="middle" font-size="12.5" font-weight="700" fill="#f4f8fc">agent runs with the reduced surface</text>
+  <text x="465" y="630" text-anchor="middle" font-size="9.5" fill="#b6c4d6">the restriction is live for the whole session</text>
+  <text x="465" y="648" text-anchor="middle" font-size="8.5" fill="#8d9cb0">config is hot-read - applies to agents created after a change</text>
+
+  <rect x="690" y="580" width="180" height="88" rx="10" fill="#16262a" stroke="#8fb4b8" stroke-width="1.8"/>
+  <text x="780" y="606" text-anchor="middle" font-size="13" font-weight="700" fill="#dceef0">audit.jsonl</text>
+  <text x="780" y="624" text-anchor="middle" font-size="9.5" fill="#9fc0c4">append-only ledger</text>
+  <text x="780" y="642" text-anchor="middle" font-size="8.5" fill="#7f9ea3">one row per agent created</text>
+
+  <!-- audit spine -->
+  <path d="M640,110 H712 V576" fill="none" stroke="#8fb4b8" stroke-width="1.6" stroke-dasharray="5 4" marker-end="url(#m-teal)"/>
+  <path d="M702,510 H712" fill="none" stroke="#8fb4b8" stroke-width="1.6" stroke-dasharray="5 4"/>
+  <text x="720" y="570" font-size="8.5" fill="#8fb4b8">every decision logged</text>
+
+  <text x="254" y="686" font-size="8.5" fill="#8d9cb0">the keep-only branch also ends in tools.restrict() - as an allow list instead of a deny list</text>
+
+  <!-- new tool gate panel -->
+  <rect x="736" y="146" width="214" height="384" rx="12" fill="#1b1c22" stroke="#f0b429" stroke-width="1.6" stroke-dasharray="8 5"/>
+  <text x="748" y="174" font-size="12.5" font-weight="700" fill="#f5c451">new tool gate</text>
+  <text x="748" y="190" font-size="9" fill="#c7a45c">lock file - three states</text>
+
+  <rect x="748" y="204" width="190" height="46" rx="10" fill="#33260e" stroke="#f0b429" stroke-width="1.6"/>
+  <text x="843" y="224" text-anchor="middle" font-size="11.5" font-weight="700" fill="#ffe4a3">new tool name appears</text>
+  <text x="843" y="240" text-anchor="middle" font-size="8.5" fill="#d9b978">first sight at runtime</text>
+
+  <path d="M843,250 V258" fill="none" stroke="#f0b429" stroke-width="1.7" marker-end="url(#m-amber)"/>
+
+  <rect x="775" y="262" width="136" height="46" rx="10" fill="#33260e" stroke="#f0b429" stroke-width="1.8"/>
+  <text x="843" y="282" text-anchor="middle" font-size="12.5" font-weight="700" fill="#ffe4a3">pending</text>
+  <text x="843" y="298" text-anchor="middle" font-size="8.5" fill="#d9b978">denied to subagents</text>
+
+  <path d="M843,308 V316" fill="none" stroke="#f0b429" stroke-width="1.7" marker-end="url(#m-amber)"/>
+
+  <rect x="765" y="320" width="156" height="46" rx="10" fill="#33260e" stroke="#f0b429" stroke-width="1.6"/>
+  <text x="843" y="340" text-anchor="middle" font-size="12" font-weight="700" fill="#ffe4a3">ruled by you</text>
+  <text x="843" y="356" text-anchor="middle" font-size="8.5" fill="#d9b978">panel: gate and discovery</text>
+
+  <path d="M814,366 L798,394" fill="none" stroke="#f0b429" stroke-width="1.7" marker-end="url(#m-amber)"/>
+  <path d="M872,366 L888,394" fill="none" stroke="#6b7280" stroke-width="1.7" stroke-dasharray="5 4" marker-end="url(#m-teal)"/>
+
+  <rect x="746" y="398" width="90" height="54" rx="10" fill="#14301f" stroke="#4ade80" stroke-width="1.6"/>
+  <text x="791" y="420" text-anchor="middle" font-size="11.5" font-weight="700" fill="#c9f7dc">seen</text>
+  <text x="791" y="436" text-anchor="middle" font-size="8.5" fill="#8fd8ac">already ruled</text>
+
+  <rect x="846" y="398" width="90" height="54" rx="10" fill="#1b2026" stroke="#6b7280" stroke-width="1.6" stroke-dasharray="5 4"/>
+  <text x="891" y="414" text-anchor="middle" font-size="11.5" font-weight="700" fill="#98a3b2">forced</text>
+  <text x="891" y="427" text-anchor="middle" font-size="8" fill="#79828f">preset registered</text>
+  <text x="891" y="439" text-anchor="middle" font-size="8" fill="#79828f">restrict cannot</text>
+  <text x="891" y="449" text-anchor="middle" font-size="8" fill="#79828f">reach it</text>
+
+  <text x="748" y="478" font-size="8.5" fill="#c7a45c">pending names join the deny set</text>
+  <text x="748" y="494" font-size="8.5" fill="#c7a45c">stale entries are never cleaned</text>
+  <text x="748" y="510" font-size="8.5" fill="#c7a45c">lock: depth-tool-gate.lock.json</text>
+
+  <!-- amber feedback : pending feeds step 1 -->
+  <path d="M736,168 V42 H460 V54" fill="none" stroke="#f0b429" stroke-width="1.7" stroke-dasharray="6 4" marker-end="url(#m-amber)"/>
+  <text x="600" y="36" text-anchor="middle" font-size="9" fill="#f0b429">pending joins the deny set</text>
+
+  <!-- legend -->
+  <rect x="22" y="700" width="12" height="12" rx="3" fill="#8b9cff"/>
+  <text x="40" y="711" font-size="9.5" fill="#9fb0c7">policy lists</text>
+  <rect x="128" y="700" width="12" height="12" rx="3" fill="#34d399"/>
+  <text x="146" y="711" font-size="9.5" fill="#9fb0c7">host API</text>
+  <rect x="226" y="700" width="12" height="12" rx="3" fill="#f0b429"/>
+  <text x="244" y="711" font-size="9.5" fill="#9fb0c7">new tool gate</text>
+  <rect x="344" y="700" width="12" height="12" rx="3" fill="#8fb4b8"/>
+  <text x="362" y="711" font-size="9.5" fill="#9fb0c7">audit ledger</text>
+  <rect x="450" y="700" width="12" height="12" rx="3" fill="#93a7c4"/>
+  <text x="468" y="711" font-size="9.5" fill="#9fb0c7">decision</text>
+  <rect x="546" y="700" width="12" height="12" rx="3" fill="#a78bfa"/>
+  <text x="564" y="711" font-size="9.5" fill="#9fb0c7">keep-only branch</text>
+
+  <text x="22" y="736" font-size="9" fill="#7f90a8">The gate is fail-open: a gate error never blocks the session - it is written to the ledger instead.</text>
+</svg>

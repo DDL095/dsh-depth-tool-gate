@@ -1,13 +1,19 @@
+# 🚧 dsh-depth-tool-gate
+
 <div align="center">
-  <img src="./icon.svg" width="96" alt="dsh-depth-tool-gate">
-  <h1>dsh-depth-tool-gate</h1>
-  <p><b>Cut every DSH subagent's tool surface down to what its job needs — and its prompt down to what it must read.</b></p>
-  <p>
-    <a href="https://www.npmjs.com/package/dsh-depth-tool-gate"><code>npm i dsh-depth-tool-gate</code></a>
-    · <a href="./docs/panel-guide.md">Panel guide</a>
-    · <a href="./docs/agent-faq.md">FAQ</a>
-    · <a href="./versions.md">Changelog</a>
-  </p>
+
+**Tool-surface governance for DeepSeek Harness — cut every subagent's tools down to what its job needs, and its prompt down to what it must read.**
+
+<p>
+  <a href="https://www.npmjs.com/package/dsh-depth-tool-gate"><img src="https://img.shields.io/npm/v/dsh-depth-tool-gate?style=flat-square&color=cb3837" alt="npm version"></a>
+  <a href="./LICENSE"><img src="https://img.shields.io/badge/license-MIT-10b981?style=flat-square" alt="MIT License"></a>
+  <img src="https://img.shields.io/badge/Node-%3E%3D24.9-f59e0b?style=flat-square" alt="Node >= 24.9">
+</p>
+
+<p><b>English</b> · <a href="README.zh.md"><b>中文说明</b></a></p>
+
+<img src="./docs/banner.svg" alt="dsh-depth-tool-gate banner" width="920">
+
 </div>
 
 ---
@@ -18,7 +24,7 @@ A DSH subagent inherits the main session's entire tool catalog and the full glob
 
 > **Quick start** — DSH ≥ 0.2.2-rc.1, Node ≥ 24.9.0. In your DSH profile directory (`~/.dsh/profiles/web`): `npm i dsh-depth-tool-gate`, then **append** `"dsh-depth-tool-gate"` to the `dsh.profile.bundles` array in that profile's `package.json`, restart DSH, and open **Settings → Subagent Tool Surface**. Full steps and prerequisites: [Install](#install).
 
-**当前版本 v0.12.1** · 中文说明见 [下方](#中文说明) · 中文文档 `docs/*.md`
+**Current version v0.13.0** · 中文说明见 [README.zh.md](README.zh.md) · 中文文档 `docs/*.md`
 
 ---
 
@@ -32,6 +38,19 @@ A DSH subagent inherits the main session's entire tool catalog and the full glob
 | **Wasted capability** | A subagent holds "restart the whole system" or "install software" next to "read a file" | Dangerous and irrelevant tools are denied by name, per role |
 | **Auditability** | Whatever the tool surface is, it is invisible | Every decision is written to an append-only JSONL ledger, with a panel that replays it |
 | **On-demand minimalism** | A task needs one narrow tool set, so it gets all of them | `dispatch_composed` assembles a temporary minimal surface from capability tags |
+
+---
+
+## How it works
+
+![Gating flow](docs/gating-flow.svg)
+
+Everything happens on `agent/created` — the moment the host finishes creating an agent, before it starts working:
+
+1. **Compute** the effective deny set for that agent from the six policy lists below.
+2. **Branch** on whether the agent runs under a preset that mounts `role-briefs` — that decides whether `preset_allow` behaves as an exemption or as a keep-only list.
+3. **Apply** the result through the host's `tools.restrict()` API, and inject the per-role brief and the prompt masking.
+4. **Log** the decision to the append-only ledger, whether or not anything was cut.
 
 ---
 
@@ -149,7 +168,7 @@ npm i dsh-depth-tool-gate
 ```jsonc
 {
   "dependencies": {
-    "dsh-depth-tool-gate": "^0.12.1"
+    "dsh-depth-tool-gate": "^0.13.0"
   },
   "dsh": {
     "profile": {
@@ -259,60 +278,6 @@ The briefs live **inside the installed package**, next to `role-briefs.mjs` — 
 
 ---
 
-## 中文说明
-
-**dsh-depth-tool-gate** 是 [DeepSeek Harness](https://www.npmjs.com/package/@deepseek-ai/dsh)（DSH）的**工具面与提示预算治理插件**。
-
-DSH 的子代理默认继承主会话的**全部工具**与**全部全局引导**：一个"读三篇论文"的干活代理，照样握着文生图、插件管理、系统重启、定时任务这些它永远不会用的工具 —— 每件工具的 schema 都要在**每一轮**重新发送一遍。dsh-depth-tool-gate 按策略把这些裁掉，并留下可查的账。
-
-> **快速开始** —— 需 DSH ≥ 0.2.2-rc.1、Node ≥ 24.9.0。在你的 DSH profile 目录（`~/.dsh/profiles/web`）下执行 `npm i dsh-depth-tool-gate`，然后把 `"dsh-depth-tool-gate"` **追加**到该 profile `package.json` 的 `dsh.profile.bundles` 数组末尾，重启 DSH，打开 **设置 → 子代理工具面**。完整步骤与前置条件见 [Install](#install)。
-
-### 核心机制
-
-| 机制 | 说明 |
-|---|---|
-| **负面清单闸门** | `agent/created` 时按名单算出禁用集合，用宿主 `tools.restrict()` 强制裁剪。**普通子代理**：`baseline_deny` ∪ `pending` → 减去 `preset_allow[role]`（豁免）→ 并上 `preset_extra_deny[role]`；**挂了 `role-briefs` 的 preset**（随包三个都挂了）：`preset_allow[brief]` 另作 keep-only 生效 → 面就等于该清单；**主会话**：有正面清单则 keep-only（`main_deny` 不叠加），否则裁 `main_deny` ∪ `main_preset_extra_deny[preset]`。主会话另有 18 件保护集（仅在 deny 分支生效，keep-only 分支不保护），误裁会被自动剔除并告警 |
-| **新工具闸门（lock）** | 运行时首次出现的工具名记为 `pending`，默认拦截子代理，等你裁决。三态：`pending` 待裁决 / `seen` 已裁决 / `forced` preset 注册不可达（灰显）。失效条目**永不清理**，重装即复效。**首次安装会按当时已有的工具建档并标 `seen`**（拦新不拦旧），所以刚装好时 pending 为空是预期状态，不是闸门失效 |
-| **preset 访问控制** | 禁止某些 preset 被用作子代：子代只留最小回报面（`note_search`/`send_message`），台账记 `preset-denied`。**fail-closed**：裁剪失败则一件工具都不给，绝不给全量。⚠ 拦截发生在创建**之后**（子代仍会 spawn、占一次名额）；隐藏只作用于 `list_agent_presets` 工具，宿主 UI 的 preset 列表仍会显示 |
-| **动态工具面组装** | `dispatch_composed(capabilities=["literature"])` 按能力标签取并集，子代出生即只保留该面 —— 面外一切（含未来新工具）不可见。内置 5 个标签：`reader`(8 件/0 MCP)、`reader-lead`(9/0)、`ocr`(9/2)、`literature`(22/15)、`literature-lead`(23/15)。缺 MCP 时 **MCP 件被丢弃、其余保留**（不是空面）。标签写错则**直接失败**并列出可用标签 |
-| **角色化引导** | 不再让子代背全量全局引导：改为 `_common.md` + 角色专属文件拼接注入（系统提示段，可按 `provenance_audit` 精确归因字节）。随包三个岗位的注入文本实测 1.8–3.4 KB（`_common` 1.4KB + 岗位段 0.5–2.1KB） |
-| **提示段遮蔽** | `prompt-slim` 让 preset 内同名空段遮蔽全局段 —— 没有定时任务工具的子代，不必读定时任务纪律 |
-| **可视化面板** | 设置 → 子代理工具面，7 个 Tab：全局工具面 / 主会话与访问 / 子代理按角色 / 能力标签 / 调用频率 / 裁剪台账 / 闸门与发现 |
-| **只读诊断** | `explain_gate` 解释当前 agent 的工具面：可见几件、裁了几件、**每件为什么被裁**。它是**会话内 agent 调用的工具**，不是命令行命令 |
-
-### 生效口径
-
-- 配置**热读**，但只对**之后创建或恢复**的会话生效；运行中的会话保持出生时的工具面不变。
-- 频率快照落盘，重启不清零。
-- 主会话与子代理的策略**分场景独立配置**（`main_preset_*` 与 `preset_*` 分键），旧配置自动回落兼容。
-
-### 安装
-
-四步（详见上方 [Install](#install)）：
-
-1. 在**你的 DSH profile 目录**下执行 `npm i dsh-depth-tool-gate`；
-2. 把 `"dsh-depth-tool-gate"` **追加**到该 profile `package.json` 的 `dsh.profile.bundles` 数组**末尾**（不要整个替换 —— 数组会被整体覆盖，写短了会清掉你原有的 bundle）；
-3. 重启 DSH；
-4. 验证：让 agent 调 `explain_gate`，应返回可见数与裁剪原因。
-
-若设置里找不到「子代理工具面」面板 = bundle 未加载（检查是否装在**本** profile、包名是否拼写一致）。
-
-### 前置条件
-
-- **DSH ≥ 0.2.2-rc.1**（依赖宿主四条内部语义：`tools.restrict()/view()` 存在且对未知名 fail-loud、`view()` 收 scope key、own 层豁免 restrictions、限制取交集；另用 `createScope()`，只传 ctx 与 key 两个参数）
-- **Node ≥ 24.9.0**（与宿主一致）
-- 两个 peer 包由宿主提供（`@deepseek-ai/dsh-scope`、`@deepseek-ai/dsh-typert-protocol`）。它们声明为 optional peer，但插件是**静态 import** —— 若宿主未提供，插件会以 `ERR_MODULE_NOT_FOUND` 加载失败
-
-### 隐私
-
-- 频率采集**只记工具名与调用次数**，不落 arguments 与工具内容。
-- 台账只记 agent id / 深度 / preset / 件数 / 裁决，不记代理说了什么、做了什么；但它能复原"何时哪个 preset 起了哪些代理"，属运维元数据。
-- `dispatch_composed` 回执超过 64KB 时，**子代理的完整输出**会落盘到 `logs/depth-tool-gate/spill/composed-reply-*.md` —— 该文件含子代**实际输出正文**，需自行清理。
-- 全部数据留在本地 `$DSH_HOME`：**无遥测、无网络调用、无安装脚本**。
-- 时间戳存 UTC，按本地时区显示。
-
----
-
 ## Development
 
 The repository is the single source of truth; `scripts/release-export.mjs` produces the publishable snapshot (staged, assertion-checked, then swapped atomically).
@@ -321,10 +286,12 @@ The repository is the single source of truth; `scripts/release-export.mjs` produ
 node --check host.v2.mjs && node --check client.js   # syntax
 node scripts/smoke-save-nopresetmap.mjs                # host regression smoke
 node scripts/smoke-readme-facts.mjs                    # README-vs-code fact gate
+node scripts/client-smoke.mjs                          # client-side contract smoke
+node scripts/probe-save-runtime.mjs                    # save() runtime probe
 node scripts/release-export.mjs                        # build + assert the release snapshot
 ```
 
-Release notes are in [versions.md](versions.md). The package ships the runtime, the client half, the locale files, the bundle patch, the role briefs, the five `docs/` guides listed above and the changelog.
+Release notes are in [versions.md](versions.md). The package ships the runtime, the client half, the locale files, the bundle patch, the role briefs, the five `docs/` guides listed above, the diagrams and the changelog.
 
 Development-only assets — surgery scripts, archaeology notes, the internal release manual — live under `internal/` and are **not published**; see [internal/README.md](internal/README.md).
 
