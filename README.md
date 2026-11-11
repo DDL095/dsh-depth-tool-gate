@@ -293,7 +293,7 @@ node scripts/release-export.mjs                        # build + assert the rele
 
 Release notes are in [versions.md](versions.md). The package ships the runtime, the client half, the locale files, the bundle patch, the role briefs, the five `docs/` guides listed above, the diagrams and the changelog.
 
-Development-only assets — surgery scripts, archaeology notes, the internal release manual — live under `internal/` and are **not published**; see [internal/README.md](internal/README.md).
+Development-only assets — surgery scripts, archaeology notes, the internal release manual — live under `internal/` in the repository and are **not published** in the npm package.
 
 ---
 

@@ -293,7 +293,7 @@ node scripts/release-export.mjs                        # 构建 + 断言发布�
 
 发布说明见 [versions.md](versions.md)。包内含运行期代码、客户端半、locale 文件、bundle patch、岗位引导、上面列的五篇 `docs/` 指南、图示与变更日志。
 
-仅供开发的资产 —— 手术脚本、考古笔记、内部发布手册 —— 都在 `internal/` 下，**不发布**；见 [internal/README.md](internal/README.md)。
+仅供开发的资产 —— 手术脚本、考古笔记、内部发布手册 —— 都在**仓库**的 `internal/` 下，**不随 npm 包发布**。
 
 ---
 
