@@ -18,7 +18,7 @@ A DSH subagent inherits the main session's entire tool catalog and the full glob
 
 > **Quick start** — DSH ≥ 0.2.2-rc.1, Node ≥ 24.9.0. In your DSH profile directory (`~/.dsh/profiles/web`): `npm i dsh-depth-tool-gate`, then **append** `"dsh-depth-tool-gate"` to the `dsh.profile.bundles` array in that profile's `package.json`, restart DSH, and open **Settings → Subagent Tool Surface**. Full steps and prerequisites: [Install](#install).
 
-**当前版本 v0.12.0** · 中文说明见 [下方](#中文说明) · 中文文档 `docs/*.md`
+**当前版本 v0.12.1** · 中文说明见 [下方](#中文说明) · 中文文档 `docs/*.md`
 
 ---
 
@@ -149,7 +149,7 @@ npm i dsh-depth-tool-gate
 ```jsonc
 {
   "dependencies": {
-    "dsh-depth-tool-gate": "^0.12.0"
+    "dsh-depth-tool-gate": "^0.12.1"
   },
   "dsh": {
     "profile": {

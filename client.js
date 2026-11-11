@@ -12,7 +12,12 @@
  *   docs/tool-annotations.md(面板 note 与文档同源维护)。
  * 纯 DOM/React.createElement 构建, 零 innerHTML(同 dfile-menu 安全范式)。 */
 window.__ModuleLoader__.load({
-	id: "depth-tool-gate",
+	/* 模块注册 id 必须 == 包名(package.json 的 name): 宿主 arrive(row) 取
+	 * row.id(= 包名) 去查 factories.has(id), 不匹配即报
+	 * "loaded without registering \"<包名>\" via __ModuleLoader__.load",
+	 * 且整个 client 模块装载失败 —— 面板随之不可用。
+	 * 先例: dsh-moa-native 的 client 注册 id 同为包名 dsh-moa-native。 */
+	id: "dsh-depth-tool-gate",
 	factory: (require) => {
 		var module = { exports: {} };
 		var exports = module.exports;

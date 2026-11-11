@@ -2,6 +2,16 @@
 
 > 最新版本在前。版本号单一权威源 = `package.json`。条目中的 commit hash 是可校验的锚点。
 
+## v0.12.1 (2026-11-11) —— 客户端模块注册 id 修复（发布阻断级）
+
+v0.12.0 的包名统一批漏改了一处**客户端注册 id**，导致浏览器端整个 client 模块装载失败（面板不可用），已在被外部使用前拦截。
+
+- **根因**：`client.js` 的 `window.__ModuleLoader__.load({ id })` 里的 id 仍是旧包名。宿主装载时取 `row.id`（= 包名）去查 `factories.has(id)`，不匹配即报 `loaded without registering "<包名>" via __ModuleLoader__.load` 并判定该模块装载失败。改名批的脚本把"插件 id"与"模块注册 id"当成同一契约一并保护了，但二者相反：模块注册 id **必须等于包名**；
+- **三个 id 的契约（本批厘清）**：模块注册 id（`__ModuleLoader__.load`）**必须 == 包名**；`remote.$mount({ package })` == 宿主 `export const name`（插件名）；`slots.register({ id })` 是设置页槽位 id，与包名无关、不受约束；
+- **为什么服务端 canary 抓不到**：宿主 `debug.json` 的 `clientModules.graph.entries` 取自 `package.json` 的包名，与 `client.js` 内部注册的 id 无关 —— 两者不一致时它反而显示"正确"。只有真正 eval 客户端源码才能发现；
+- **补上客户端半冒烟**：新增 `scripts/client-smoke.mjs`（mock `__ModuleLoader__` / react / remote / slots 后 eval 客户端源码），断言模块注册 id == 包名、`$mount.package` == 宿主导出名、apply 成功、面板可渲染；已用阴性对照验证该探针对本次缺陷报红；
+- **另有同批补的运行时探针**：`scripts/probe-save-runtime.mjs` 实调 `save()` 验真实落盘（静态断言看不见 `catch` 里的静默失败）。
+
 ## v0.12.0 (2026-11-11) —— 包名统一批（破坏性）
 
 开发态包名由 `depth-tool-gate` 改为 `dsh-depth-tool-gate`，与 npm 发布名、GitHub 仓名三者统一为单一身份（与 `dsh-moa-native` 同范式），不再依赖导出器做身份改写。
