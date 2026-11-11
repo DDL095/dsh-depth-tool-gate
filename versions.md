@@ -24,9 +24,20 @@ v0.13.2 的 wait 路径把 `stopReason` / `error` 以 `undefined` 写入返回�
 - `scripts/probe-lossless.mjs` (17 项) —— 真值表 + 阴性对照
 - `scripts/probe-lossless-fix.mjs` (29 项) —— 从 `host.v2.mjs` **源码抽取**真实现, 防副本漂移
 - `scripts/probe-label-drift.mjs` (23 项) —— 同标签/异标签/自定义标签的面决定性实验
+- `scripts/probe-composed-wait.mjs` (21 项) —— **端到端**: 跑真实 `execute()` 的
+  `wait=true` 路径, 让假子代理 resolve 出生产同款结果(缺 `stopReason`),
+  拿实际 return 的对象过宿主真函数判定; 含阴性对照(旧形状仍判非法)
+
+**附带修复: 失败子项渲染打 ✗ 而不是 ✓**
+子项刻意不带 `ok` 字段(不给显示目的污染数据形状), 旧渲染只判 `ok === false`,
+于是失败子项渲染成「[dispatch_composed ✓] … 错误: spawn 失败」自相矛盾。
+判定改为: 显式 `ok=false` ⇒ ✗; 否则有 `error` ⇒ ✗; 否则 ✓。
+`test-render-logic` 22 → 25 项, 阴性对照: 判定改回旧形态 ⇒ 新增 2 条断言立刻报红。
 
 **同标签面稳定性实测**(台账按面内容分组, v0.13.2 后 31 条):
 最大一组 `allow=17 + 补挂 8 件` 跨 4.5 小时、19 次不同任务, **面内容零差异**。
+
+**发布物**: 28 件; tag `v0.13.3`; tarball sha256 `d47334ef…0ac3`(123,156 B)。
 
 ## v0.13.2 (2026-11-11) —— 并行与续派面稳定批
 
