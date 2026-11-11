@@ -2,6 +2,32 @@
 
 > 最新版本在前。版本号单一权威源 = `package.json`。条目中的 commit hash 是可校验的锚点。
 
+## v0.13.3 (2026-11-11) —— lossless JSON 返回值修复批
+
+**缺陷**: `dispatch_composed` 的 `wait=true` 路径每次都返回
+`tool "dispatch_composed" returned invalid output: value is not lossless JSON`
+—— 子代理其实已派出、结果也正常异步投递, 只是**工具返回值**非法。
+
+**根因**(宿主真函数判定, 非推断): 宿主 `dsh-tools/lib/pipeline.js:797` `snapshotToolValue`
+对 execute 返回值做 `snapshotJsonValue`; `dsh-util-values/lib/index.js:676` `walkJsonValue:701`
+判定「任一属性值为 `undefined` / `NaN` / `±Infinity` / `-0` ⇒ 整个对象非法」。
+v0.13.2 的 wait 路径把 `stopReason` / `error` 以 `undefined` 写入返回值 ⇒ 必炸。
+非阻塞路径因为不写这两个键而正常 —— 这正是缺陷只在 `wait=true` 出现的原因。
+
+**修法**(双层):
+1. wait 路径缺值一律**省略键**(探针证明: `undefined`=非法 / 缺失键=合法 / `null`=合法);
+2. 出口统一净化 `toLossless()`: 所有 execute 返回路径都过一遍 ——
+   剔 `undefined`、非有限数转 `null`、数组内 `undefined` 转 `null`、
+   丢弃非普通原型的对象(宿主句柄)。以后新增字段不可能再踩这个坑。
+
+**新增探针**(用宿主真函数, 非同构副本):
+- `scripts/probe-lossless.mjs` (17 项) —— 真值表 + 阴性对照
+- `scripts/probe-lossless-fix.mjs` (29 项) —— 从 `host.v2.mjs` **源码抽取**真实现, 防副本漂移
+- `scripts/probe-label-drift.mjs` (23 项) —— 同标签/异标签/自定义标签的面决定性实验
+
+**同标签面稳定性实测**(台账按面内容分组, v0.13.2 后 31 条):
+最大一组 `allow=17 + 补挂 8 件` 跨 4.5 小时、19 次不同任务, **面内容零差异**。
+
 ## v0.13.2 (2026-11-11) —— 并行与续派面稳定批
 
 修两个实测坐实的缺陷：**派单只能串行**，**续派后子代理工具面完全变掉**。

@@ -595,6 +595,45 @@ function gateComposed(agent, cap, depth) {
 	}
 }
 
+/* ── lossless JSON 净化(v0.13.3)──────────────────────────────────────────
+ * 宿主 dsh-tools/lib/pipeline.js:797 snapshotToolValue 对 execute 返回值做
+ * snapshotJsonValue; dsh-util-values/lib/index.js:676 walkJsonValue:701
+ * 判定「任一属性值为 undefined / NaN / ±Infinity / -0 ⇒ 整个对象非法」,
+ * 宿主随即抛 ToolOutputError「value is not lossless JSON」。
+ *
+ * 生产事故(2026-11-11): dispatch_composed 的 wait=true 路径把
+ * stopReason / error 以 undefined 写入返回值 ⇒ 每次 wait=true 必炸
+ * 「returned invalid output: value is not lossless JSON」(子代理其实已派出、
+ * 结果也正常异步投递, 只是工具返回值非法)。
+ *
+ * 修法: 出口统一净化 —— 剔掉 undefined 值(键整个不写)、非有限数转 null、
+ * 数组里的 undefined 转 null、丢弃非普通原型的对象(宿主句柄等)。
+ * 语义不变, 只是保证返回值是宿主能接受的 lossless JSON。
+ */
+function toLossless(value, depth = 0) {
+	if (value === null) return null;
+	const t = typeof value;
+	if (t === "string" || t === "boolean") return value;
+	if (t === "number") return Number.isFinite(value) ? (Object.is(value, -0) ? 0 : value) : null;
+	if (t === "bigint") return Number(value);
+	if (t === "undefined" || t === "function" || t === "symbol") return undefined;
+	if (depth > 12) return null;
+	if (Array.isArray(value)) return value.map((v) => { const x = toLossless(v, depth + 1); return x === undefined ? null : x; });
+	if (t === "object") {
+		/* 只处理普通对象: 宿主句柄(AbortController / AgentRun 等)不是 JSON 值,
+		 * 也不该出现在返回值里 → 整个丢弃(键省略)。 */
+		const proto = Object.getPrototypeOf(value);
+		if (proto !== Object.prototype && proto !== null) return undefined;
+		const out = {};
+		for (const [k, v] of Object.entries(value)) {
+			const x = toLossless(v, depth + 1);
+			if (x !== undefined) out[k] = x;
+		}
+		return out;
+	}
+	return undefined;
+}
+
 /* ── 核心裁剪: 同步、纯内存+偶发小文件、微秒~毫秒级(agent/created serial 事件不可阻塞) ── */
 function gateAgent(agent) {
 	try {
@@ -1100,6 +1139,23 @@ USAGE_TOTAL.set(name, (USAGE_TOTAL.get(name) || 0) + 1);
 					render: (_a, value) => renderComposed(value, { dshHome: DSH_HOME }),
 				},
 				async execute(args, exec) {
+					/* [v0.13.3] 出口统一净化: 宿主要求工具返回值必须是 lossless JSON
+					 * (dsh-tools/lib/pipeline.js:797 → snapshotJsonValue → walkJsonValue:701,
+					 *  任一属性值为 undefined/NaN ⇒ 整对象非法 ⇒ 宿主抛
+					 *  「value is not lossless JSON」)。所有 return 路径都过 toLossless,
+					 *  以后新增字段不可能再踩这个坑。 */
+					const out = await executeComposed(args, exec);
+					const clean = toLossless(out);
+					return clean === undefined ? { ok: false, error: "dispatch_composed 返回值无法净化" } : clean;
+				},
+			});
+			log("dispatch_composed 工具已注册(动态工具面组装)");
+			return () => { try { reg?.dispose?.(); } catch { /* noop */ } };
+		} catch (e) { warn("dispatch_composed 注册失败(动态组装不可用, 裁剪不受影响): " + String((e && e.message) || e)); return () => {}; }
+	}, "dsh-depth-tool-gate.composedDispatcher()");
+
+	/* execute 的真实实现(独立函数, 便于出口统一净化)。 */
+	async function executeComposed(args, exec) {
 					try {
 						const cfg = readConfig();
 						if (cfg && cfg.enabled === false) return { ok: false, error: "dsh-depth-tool-gate 已禁用" };
@@ -1217,14 +1273,35 @@ USAGE_TOTAL.set(name, (USAGE_TOTAL.get(name) || 0) + 1);
 									const reply = Array.isArray(result?.output)
 										? result.output.filter((b) => b?.type === "text").map((b) => b.text).join("")
 										: "";
-									outs.push({ ...s, stopReason: result?.stopReason, reply: reply || "(子代理无文本输出)", run: undefined });
+									/* [v0.13.3] 缺值一律**省略键**, 不写 undefined。
+									 * 宿主 dsh-tools/lib/pipeline.js:797 snapshotToolValue →
+									 * snapshotJsonValue → dsh-util-values walkJsonValue:701
+									 * `if (typeof current !== "object") return void 0`
+									 * ⇒ 任一属性值为 undefined ⇒ 整个对象快照失败 ⇒ 宿主抛
+									 * 「value is not lossless JSON」(生产实测: wait=true 必炸,
+									 *  非阻塞路径因为不写这些键而正常)。
+									 * 探针 scripts/probe-lossless.mjs 用宿主真函数坐实:
+									 *  undefined=非法 / 缺失键=合法 / null=合法。 */
+									const o = { ...s, reply: reply || "(子代理无文本输出)" };
+									delete o.run;
+									if (result?.stopReason !== undefined && result?.stopReason !== null) o.stopReason = result.stopReason;
+									outs.push(o);
 								} catch (e) {
-									outs.push({ ...s, ok: false, error: String((e && e.message) || e), run: undefined });
+									const o = { ...s, ok: false, error: String((e && e.message) || e) };
+									delete o.run;
+									outs.push(o);
 								} finally { try { await s.run?.dispose?.(); } catch { /* noop */ } }
 							}
 							return {
 								ok: outs.every((o) => o.ok), batch: true, count: outs.length,
-								dispatched: outs.map((o) => ({ childId: o.childId, label: o.label, capabilities: o.capabilities, allowed: o.allowed, stopReason: o.stopReason, reply: o.reply, error: o.error })),
+								/* 每个子项也走同一纪律: 只写有值的键 */
+								dispatched: outs.map((o) => {
+									const d = { childId: o.childId, label: o.label, capabilities: o.capabilities, allowed: o.allowed };
+									if (o.stopReason !== undefined && o.stopReason !== null) d.stopReason = o.stopReason;
+									if (o.reply !== undefined && o.reply !== null) d.reply = o.reply;
+									if (o.error !== undefined && o.error !== null) d.error = o.error;
+									return d;
+								}),
 							};
 						}
 						/* 非阻塞: 立即返回各子代理 id; 完成结果由宿主投递(delivery=parent) */
@@ -1234,17 +1311,12 @@ USAGE_TOTAL.set(name, (USAGE_TOTAL.get(name) || 0) + 1);
 							dispatched: spawned.map((s) => s.ok
 								? { childId: s.childId, label: s.label, capabilities: s.capabilities, toolsExtra: s.toolsExtra, allowed: s.allowed }
 								: { label: s.label, error: s.error }),
-							note: "已派出; 各子代理完成时结果会由宿主投递给本会话(异步)。需要同步结果请再派一次并设 wait=true。",
+							note: "已派出; 各子代理完成时结果由宿主投递给本会话(异步)。需要同步结果请再派一次并设 wait=true。",
 						};
 					} catch (e) {
 						return { ok: false, error: String((e && e.message) || e) };
 					}
-				},
-			});
-			log("dispatch_composed 工具已注册(动态工具面组装)");
-			return () => { try { reg?.dispose?.(); } catch { /* noop */ } };
-		} catch (e) { warn("dispatch_composed 注册失败(动态组装不可用, 裁剪不受影响): " + String((e && e.message) || e)); return () => {}; }
-	}, "dsh-depth-tool-gate.composedDispatcher()");
+	}
 
 	/* goal 全周期守护自动化: 主会话 scope 注册同名 create_goal(shadow
 	 * 全局官方版), 创建后自动写 armed-goals.json(durable 白名单)——免去手动
