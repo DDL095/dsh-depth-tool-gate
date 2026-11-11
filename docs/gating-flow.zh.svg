@@ -8,7 +8,7 @@
     svg.gf{
       --fg:#16202e; --fg2:#44536a; --fg3:#5b6b80;
       --line:#8ea1b7; --line2:#4a5c72;
-      --bg-soft:rgba(22,32,46,.05); --bg-head:rgba(22,32,46,.10);
+      --bg-soft:rgba(22,32,46,.05); --bg-head:rgba(22,32,46,.10); --halo:rgba(255,255,255,.75);
       --violet:#6b5fd4; --blue:#1d4ed8; --indigo:#4f46e5; --purple:#7c3fb0;
       --cyan:#0e7490; --green:#157a52; --amber:#8f6408; --teal:#2f6f74;
       --steel:#4f6383; --gray:#5c6675;
@@ -18,12 +18,16 @@
       --t-amber:rgba(143,100,8,.10); --t-teal:rgba(47,111,116,.09);
       --t-gray:rgba(92,102,117,.09); --t-badge:rgba(21,122,82,.18);
     }
-    /* 深色背景分支：浅色文字、更亮的描边色 */
+    /* 深色背景分支：浅色文字、更亮的描边色
+     * 两种触发方式(都要):
+     *   ① 系统偏好(prefers-color-scheme: dark) —— GitHub 深色主题时的默认路径;
+     *   ② 显式 data-theme="dark" —— 页面/文档可以强制指定, 不受系统偏好摆布。
+     *      (媒体查询只跟随系统偏好: 深底页面 + 浅色系统偏好 = 深字压深底, 看不清。) */
     @media (prefers-color-scheme: dark){
       svg.gf{
         --fg:#e9eff9; --fg2:#bccadd; --fg3:#98a9bf;
         --line:#6b7e98; --line2:#9aadc5;
-        --bg-soft:rgba(255,255,255,.055); --bg-head:rgba(255,255,255,.11);
+        --bg-soft:rgba(255,255,255,.055); --bg-head:rgba(255,255,255,.11); --halo:rgba(8,12,20,.80);
         --violet:#9d95f6; --blue:#7fa8f7; --indigo:#8f95f5; --purple:#c28cf0;
         --cyan:#6ad0e8; --green:#41d69c; --amber:#f0b429; --teal:#7cc6cb;
         --steel:#9db0cb; --gray:#a3adba;
@@ -34,8 +38,42 @@
         --t-gray:rgba(163,173,186,.12); --t-badge:rgba(65,214,156,.22);
       }
     }
+    /* 显式深色(与上面的媒体查询同值): 页面可强制, 不依赖系统偏好 */
+    svg.gf[data-theme="dark"]{
+      --fg:#e9eff9; --fg2:#bccadd; --fg3:#98a9bf;
+      --line:#6b7e98; --line2:#9aadc5;
+      --bg-soft:rgba(255,255,255,.055); --bg-head:rgba(255,255,255,.11); --halo:rgba(8,12,20,.80);
+      --violet:#9d95f6; --blue:#7fa8f7; --indigo:#8f95f5; --purple:#c28cf0;
+      --cyan:#6ad0e8; --green:#41d69c; --amber:#f0b429; --teal:#7cc6cb;
+      --steel:#9db0cb; --gray:#a3adba;
+      --t-violet:rgba(157,149,246,.13); --t-blue:rgba(127,168,247,.12);
+      --t-indigo:rgba(143,149,245,.12); --t-purple:rgba(194,140,240,.12);
+      --t-cyan:rgba(106,208,232,.12); --t-green:rgba(65,214,156,.13);
+      --t-amber:rgba(240,180,41,.13); --t-teal:rgba(124,198,203,.12);
+      --t-gray:rgba(163,173,186,.12); --t-badge:rgba(65,214,156,.22);
+    }
+    /* 显式浅色: 覆盖"系统偏好是暗"的情况(否则深底页面 + 暗系统偏好 → 亮字压亮底) */
+    svg.gf[data-theme="light"]{
+      --fg:#16202e; --fg2:#44536a; --fg3:#5b6b80;
+      --line:#8ea1b7; --line2:#4a5c72;
+      --bg-soft:rgba(22,32,46,.05); --bg-head:rgba(22,32,46,.10); --halo:rgba(255,255,255,.75);
+      --violet:#6b5fd4; --blue:#1d4ed8; --indigo:#4f46e5; --purple:#7c3fb0;
+      --cyan:#0e7490; --green:#157a52; --amber:#8f6408; --teal:#2f6f74;
+      --steel:#4f6383; --gray:#5c6675;
+      --t-violet:rgba(107,95,212,.09); --t-blue:rgba(29,78,216,.08);
+      --t-indigo:rgba(79,70,229,.08); --t-purple:rgba(124,63,176,.08);
+      --t-cyan:rgba(14,116,144,.08); --t-green:rgba(21,122,82,.10);
+      --t-amber:rgba(143,100,8,.10); --t-teal:rgba(47,111,116,.09);
+      --t-gray:rgba(92,102,117,.09); --t-badge:rgba(21,122,82,.18);
+    }
 
     text{ font-family:'Segoe UI','Microsoft YaHei','PingFang SC','Noto Sans CJK SC',sans-serif; }
+    /* 文字描边兜底: 任何底色(白/深/图片)下都保证字形可辨。
+     * paint-order:stroke 让描边画在字形之下。
+     * ⚠️ 描边色必须与**字色相反** —— 描边跟着字色走会"白字白边"糊成一团(实测翻车)。
+     * 故描边用 --halo 变量: 浅色主题=白描边(配深字), 深色主题=深描边(配浅字)。 */
+    .t1,.t2,.t3{ paint-order:stroke; stroke-width:2.6px; stroke-linejoin:round;
+                   stroke:var(--halo); }
     .t1{ fill:var(--fg); }
     .t2{ fill:var(--fg2); }
     .t3{ fill:var(--fg3); }
