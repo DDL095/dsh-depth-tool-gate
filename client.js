@@ -90,6 +90,12 @@ window.__ModuleLoader__.load({
 			"skill_supply_refresh": ["第三方插件", "重建技能物化与索引"],
 			"skill_supply_sync": ["第三方插件", "物化缺失技能"],
 			"skill_supply_add_repo": ["第三方插件", "添加技能上游仓"],
+			/* [v0.14.2 修] 第三方插件 @xmanrui/dsh-im 的三件 —— 此前**未标注** ⇒ originOf
+			 * 落 "未标注"，用户看不到它属于哪个插件、做什么用 ⇒ 无法判断该不该禁(不透明)。
+			 * 补齐来源与语义。 */
+			"dsh_im_return_file": ["第三方插件 @xmanrui/dsh-im", "回传文件到当前 IM 会话"],
+			"dsh_im_group_history": ["第三方插件 @xmanrui/dsh-im", "读取 IM 群历史消息"],
+			"dsh_im_group_file": ["第三方插件 @xmanrui/dsh-im", "读取 IM 群会话中的文件"],
 			"skill_supply_status": ["第三方插件", "技能供应链健康检查"],
 			"preset_dispatch": ["第三方插件", "外送任务到平级子会话(preset 必填)"],
 			"preset_send_message": ["第三方插件", "续聊平级子会话"],
@@ -125,7 +131,19 @@ window.__ModuleLoader__.load({
 			if (ORIGIN[n]) return ORIGIN[n];
 			const m = /^mcp__([^_]+|[^_].*?)__/.exec(n);
 			if (m) { const s = MCP_SERVERS[m[1]] || ["MCP " + m[1], ""]; return [s[0], s[1] || n.slice(n.lastIndexOf("__") + 2)]; }
-			return ["未标注", "详见 docs/tool-annotations.md"];
+			/* [v0.14.2 修] 未知来源**如实归因**, 不再只写"未标注"就完事:
+			 * ① dsh_* 前缀 ⇒ 第三方插件提供的工具(与 @xmanrui/dsh-im 同类形态);
+			 * ② 命中常用件表 ⇒ 标"常用件"并给出用途;
+			 * ③ 其余 ⇒ 明确说"来源未知(插件/宿主新增, 未登记)"并给出可执行的下一步
+			 *    (登记到 ORIGIN 表), 而不是把用户引到一份可能没写的文档。 */
+			if (n.startsWith("dsh_")) return ["第三方插件", "插件提供的工具(未登记具体插件)"];
+			if (KEEP_NAMES.has(n)) {
+				/* 防御式: KEEP_NAMES 由 KEEP_LIST 派生, 理论上 find 必命中; 但若两表
+				 * 将来不同步, [1] 会抛并炸掉整页渲染 ⇒ 这里兜底而非依赖不变量。 */
+				const hit = KEEP_LIST.find(([k]) => k === n);
+				return ["常用件", hit ? hit[1] : "常用工具"];
+			}
+			return ["来源未知", "宿主/插件新增, 未登记来源; 可在 client.js 的 ORIGIN 表补登记"];
 		}
 
 				const GROUPS = [
@@ -138,8 +156,59 @@ window.__ModuleLoader__.load({
 			{ key: "MCP维护", title: "🔧 MCP 维护类(8)", names: ["mcp__research-tools__add_whitelist", "mcp__research-tools__auto_refresh_auth", "mcp__research-tools__cleanup_browser_auth", "mcp__research-tools__clear_cache", "mcp__research-tools__test_network", "mcp__research-tools__get_whitelist", "mcp__zotero__discover", "mcp__zotero__similar"], note: "检索服务的维护与配置类" },
 		];
 
-		/* 保留不动(面板仅展示, 不可勾选 deny) */
-		const KEEP = "shell / pwsh / read / write / edit / glob / grep / web_search / web_fetch / read_image / send_message / list_agents / interrupt_agent / todo_write / add_note / note_recent / note_search / skill / present / jobs 系 / subagent·fork(maxDepth=12 总闸) / MCP 检索面(research-tools 检索·zotero 检索·sciverse·paddleocr·zhipu·minimax-plan) / list_subagent_models";
+		/* [v0.14.2→v0.14.3] 「常用件表」= 结构化清单 + 逐件用途。
+		 * 沿革(别被旧说法误导):
+		 *   v0.14.2: 原 KEEP 是自由文本, 只在页脚当说明用, 不可机器判定、无法逐件解释;
+		 *     且它**谎报** —— "保留不动(不可勾选 deny)"与实情不符: host 侧**没有**任何
+		 *     全局强制保留机制 ⇒ 子代理侧照样能把 read/web_fetch 写进 baseline_deny 被裁。
+		 *     当时改成了结构化清单, 但仍沿用"保留/保护"措辞。
+		 *   v0.14.3(用户裁定): "所有工具都应能在 preset 中禁用; 全禁只剩 chatbot 也没问题"
+		 *     ⇒ 取消"保护"语义, 全部改为**常用件**: 常见检索/文件/通信类工具的用途说明,
+		 *       **全部可照常禁用**。host 侧 PROTECTED_MAIN 同时从"硬剔除"降级为
+		 *       "警示但不阻断"(见 host.v2.mjs gateMain)⇒ 前端不再置灰任何主会话勾选框。
+		 * ★ 语义边界: 本表只是**用途说明**, 不含任何强制力; 裁剪权威始终是 config 名单。 */
+	const KEEP_LIST = [
+			["shell", "官方命令行(默认终端)"],
+			["pwsh", "官方 PowerShell 命令执行"],
+			["terminal", "官方持久交互终端"],
+			["read", "官方读取文件"],
+			["write", "官方写文件"],
+			["edit", "官方编辑文件"],
+			["glob", "官方按路径找文件"],
+			["grep", "官方按正则搜内容"],
+			["web_search", "官方网页搜索"],
+			["web_fetch", "官方抓取网页正文"],
+			["read_image", "官方读图入上下文"],
+			["send_message", "官方与子代理通信"],
+			["list_agents", "官方列子代理树"],
+			["interrupt_agent", "官方中止子代理"],
+			["todo_write", "官方任务清单"],
+			["add_note", "官方持久笔记"],
+			["note_recent", "官方读最近笔记"],
+			["note_search", "官方检索笔记"],
+			["skill", "官方加载技能"],
+			["present", "官方声明交付文件"],
+			["job_list", "官方列后台任务"],
+			["job_output", "官方读后台输出"],
+			["job_kill", "官方取消后台任务"],
+			["list_subagent_models", "官方查子代理模型"],
+			["mcp__research-tools__smart_search", "MCP 文献检索(常用)"],
+			["mcp__research-tools__search_broad", "MCP 文献检索(广度)"],
+			["mcp__research-tools__search_depth", "MCP 文献检索(深度)"],
+			["mcp__zotero__search", "MCP Zotero 检索"],
+			["mcp__zotero__check_local", "MCP Zotero 查重"],
+			["mcp__paddleocr__paddleocr_vl", "MCP 图文提取"],
+			["mcp__zhipu-search__web_search_prime", "MCP 网页搜索"],
+			["mcp__minimax-plan__web_search", "MCP 网页搜索(双源之一)"],
+			/* [v0.14.2 修] 用户裁定: yuanbao 视为"通用可用的网页检索", 与 read 等同 ——
+			 * 不应因为"没在 deny 名单里"就常驻第一页"未裁决"区(那位置暗示"待你决策")。
+			 * 它是 MCP 双源并行检索的第三路(见 AGENTS.md 搜索路由纪律), 属常用件。 */
+			["mcp__yuanbao-search__SearchPro", "MCP 网页搜索(元宝·第三路)"],
+		];
+	const KEEP_NAMES = new Set(KEEP_LIST.map(([n]) => n));
+	/* [v0.14.2] 旧的 `const KEEP = "…"` 自由文本已删(改成结构化 KEEP_LIST 后它成为死变量,
+	 * 且原文案"保留不动(不可勾选 deny)"与实情不符 —— host 侧无强制保留机制,
+	 * 写进 baseline_deny 照样会被裁)。保留清单现在是**面板建议**, UI 文案如实这么说。 */
 
 	/* [v0.10] 与 host PROTECTED_MAIN 同源镜像(host.v2.mjs 剔除+warn; 客户端预禁用防"保存成功却没生效"的回弹错觉) */
 	const PROTECTED_MAIN_MIRROR = new Set(["ask_user_question", "exit_plan_mode", "todo_write", "read", "write", "edit", "glob", "grep", "working_directory", "shell", "pwsh", "terminal", "present", "web_search", "web_fetch", "skill", "subagent", "subagent_fork"]);
@@ -327,7 +396,10 @@ window.__ModuleLoader__.load({
 			});
 			/* [v0.10] pending「主会话禁」: 两步独立操作(save 落 main_deny → rule 消 pending), 每步独立报错, 第一步失败即中止不留半状态 */
 			const mainRulePending = async (n) => {
-				if (protMain(n)) { setMsg("⚠ " + n + " 是保护件(host PROTECTED_MAIN), 不能主会话禁"); return; }
+				/* [v0.14.3 修·用户裁定] 不再拦保护件: 用户明确"所有工具都应能在 preset 中
+				 * 禁用; 全禁只剩 chatbot 也没问题" ⇒ 工具面治理不该替用户做手滑保护,
+				 * 只如实执行并提醒后果(host 侧已改为"照裁 + warn + 台账计数")。 */
+				if (protMain(n)) setMsg("⚠ " + n + " 是主会话核心能力 —— 将照裁(会话可能瘫), 继续…");
 				setBusy(true); setMsg("主会话禁: 保存中…");
 				try {
 					const merged = { ...draft, main_deny: [...new Set([...draft.main_deny, n])] };
@@ -362,6 +434,31 @@ window.__ModuleLoader__.load({
 			const th = { padding: "6px 10px", fontSize: 12, textAlign: "left", opacity: 0.8 };
 			const td = { padding: "5px 10px", fontSize: 12, verticalAlign: "top" };
 			const groupMembers = (g) => g.names || (draft.baseline_deny.concat(data.default_baseline || []).filter((n) => g.prefix && n.startsWith(g.prefix)));
+
+			/* [v0.14.2 修] 主会话侧同样需要「兜底分组」。
+			 * 缺陷(2026-11-12 实测): 子代理页有 extraOnly 兜底(presetGroups), 主会话页
+			 *   只渲染 GROUPS ⇒ 任何**不在固定分组里**的工具(第三方插件的 dsh_im_* 等)
+			 *   在主会话按角色页**根本看不到、无法勾选** —— 用户以为"没生效/没有选项",
+			 *   实际是 UI 缺少兜底分组(子代理侧能看到它们, 正是因为有 extraOnly)。
+			 * 候选池 = 该角色已有条目 ∪ baseline_deny ∪ main_deny, 减去固定分组:
+			 *   ① 已有条目: 让人看得见自己叠了什么、可以取消;
+			 *   ② baseline_deny: 你已在子代理侧裁决过的件, 很可能也想在某些主会话角色禁;
+			 *   ③ main_deny: 主会话全局禁的件, 可再按角色加码。
+			 * 三者都减去固定分组, 余下的合成「➕ 其他额外禁用(N)」兜底组。 */
+			/* [v0.14.3 修·用户裁定] 候选池 = **运行时全量可裁工具**(snap.restrictable)
+			 * ∪ 该角色已有条目 ∪ baseline_deny ∪ main_deny, 减去固定分组。
+			 * 缺陷(v0.14.2 我自己引入): 池子只取"已在 deny 名单里的件" ⇒ **从未被禁用过
+			 * 的工具(如 yuanbao)在任何角色页都不出现** ⇒ 用户裁定的"所有工具都能在
+			 * preset 中禁用"根本没实现(要先把某个工具禁一次, 它才会出现在页里)。
+			 * 修法: 以运行时 restrictable 为**主池**(这才是"可裁的全体"), 其余三者为并集。
+			 * ★ snap 未就绪时退化为"只看已有条目"(宁可少列, 不谎报有可选项)。 */
+			const mainRoleExtra = (role) => {
+				const own = new Set((draft && draft.main_preset_extra_deny && draft.main_preset_extra_deny[role]) || []);
+				const grouped = new Set(GROUPS.flatMap((g) => g.names || []));
+				const runtime = snap ? (snap.restrictable || []) : [];
+				const pool = new Set([...runtime, ...own, ...(draft.baseline_deny || []), ...(draft.main_deny || [])]);
+				return [...pool].filter((n) => !grouped.has(n));
+			};
 
 			/* live 注册表 + 已有规则 + 台账观测值; 不断言动态角色必须在静态注册表内。
 			 * [v0.4.6] 台账括号形态值过滤: "(composed:…)"=dispatch_composed 动态子代标签
@@ -428,6 +525,11 @@ window.__ModuleLoader__.load({
 		const renderDiscovered = () => {
 			if (!snap) return h("div", { style: { opacity: 0.6, fontSize: 12, padding: 8 } }, "未裁决面不可用(host snapshot 未就绪——插件为旧版或工具服务不可见; 点上方 ↻ 刷新重试)");
 			const ruledAll = new Set([...denySet, ...Object.values(draft.preset_extra_deny || {}).flat()]);
+			/* [v0.14.2→v0.14.3] 「未裁决」= 运行时工具 − deny 名单。**不减任何其他集合**。
+			 * 沿革: v0.14.2 曾把"保留清单"里的件从未裁决区排除(嫌 yuanbao 之类常驻像噪音),
+			 *   但那反而使它们**不可禁**(不在可裁决面里就没法勾选)⇒ 与用户裁定矛盾。
+			 *   用户裁定(2026-11-12): "所有工具都应能在 preset 中禁用; 全禁只剩 chatbot 也没问题"
+			 *   ⇒ 常用件(read/web_fetch/yuanbao 等)必须留在本区, 才能被勾选禁用。 */
 			const discovered = snap.restrictable.filter((n) => !ruledAll.has(n));
 			const snapLine = "运行时全局工具 " + snap.restrictable.length + " 件 · 已裁决 " + snap.ruledCount + " 件 · 未裁决 " + discovered.length + " 件 · 快照 " + fmtLocal(snap.ts) + "(↻ 刷新重取)";
 			const openPrompt = (names, label) => {
@@ -455,7 +557,7 @@ window.__ModuleLoader__.load({
 								h("td", { style: { ...td, fontFamily: "monospace", fontSize: 11 } }, n, badge(n)),
 								h("td", { style: { ...td, opacity: 0.75, whiteSpace: "normal" } }, h("b", { style: { fontSize: 11 } }, o[0]), o[1] ? " — " + o[1] : ""),
 								h("td", { style: td, title: "勾选=入 baseline_deny: 之后创建/恢复的子代理不可见(可按角色豁免); 随保存落盘" }, h("input", { type: "checkbox", checked: denySet.has(n), onChange: () => toggleName(n) })),
-								h("td", { style: td, title: prot ? "保护件(host PROTECTED_MAIN): 裁掉会瘫痪主会话, host 会硬性剔除——故此处置灰" : "勾选=入 main_deny: 之后创建/恢复的主会话不可见(子代理不受影响)" }, h("input", { type: "checkbox", disabled: prot, checked: mainDenySet.has(n), onChange: () => toggleMain(n) })),
+								h("td", { style: td, title: prot ? "主会话核心能力: 裁掉会让该会话失去基础作业能力(会照裁, 请确认)" : "勾选=入 main_deny: 之后创建/恢复的主会话不可见(子代理不受影响)" }, h("input", { type: "checkbox", checked: mainDenySet.has(n), onChange: () => toggleMain(n) })),
 								h("td", { style: td }, h("button", { onClick: () => openPrompt([n], n + " 解读"), style: { fontSize: 11, padding: "1px 8px", cursor: "pointer" } }, "🔍")));
 						})))));
 		};
@@ -496,6 +598,29 @@ window.__ModuleLoader__.load({
 							h("b", null, fold.discovered ? "▸" : "▾", " 未裁决工具(运行时快照)"),
 							h("span", { style: { fontSize: 11, opacity: 0.65 } }, "未勾选=两层都可见(默认) — 点此" + (fold.discovered ? "展开" : "收起"))),
 						!fold.discovered && h("div", { style: { padding: "0 8px 8px" } }, renderDiscovered())),
+				/* [v0.14.2 修] 保留清单独立成区: 逐件给理由 + 两层勾选(仍可禁)。
+				 * 这批件此前混在"未裁决"区(位置暗示待决策)或根本没露出 ⇒ 用户无法
+				 * 确认"这些是我要保留的、且知道为什么"。 */
+				h("div", { style: { background: "rgba(120,200,120,.05)", border: "1px solid rgba(120,200,120,.15)", borderRadius: 6, marginTop: 10 } },
+					h("b", { style: { fontSize: 12 } }, "🟢 常用件(逐件理由 · 可照常禁用)"),
+					h("div", { style: { fontSize: 11, opacity: 0.7, marginTop: 2 } }, "常用检索/文件/通信类工具。★ **没有任何工具是受保护的** —— 勾选即真禁; 不勾=两层都可见。禁用主会话核心能力(read/shell 等)会让会话瘫, 但这是你的选择, 系统只提示不阻拦。"),
+					/* [v0.14.2 修] 只显示**本 profile 运行时真的存在**的保留件。
+					 * 缺陷: KEEP_LIST 是**固定清单**, 装在别人 profile 里(没装 zotero/paddleocr
+					 * 等 MCP)会显示一堆不存在的工具 ⇒ 噪音 + 误导(看着像装坏了)。
+					 * 修法: 以运行时 restrictable 集合过滤; snap 未就绪时**不显示本区**
+					 * (宁可缺一段, 也不谎报)。 */
+					snap ? h("table", { style: { borderCollapse: "collapse", width: "100%", marginTop: 6 } },
+						h("thead", null, h("tr", null,
+							h("th", { style: th }, "工具"), h("th", { style: th }, "用途"),
+							h("th", { style: th }, "子代理禁"), h("th", { style: th }, "主会话禁"))),
+						h("tbody", null, KEEP_LIST.filter(([n]) => restrictable.has(n) || forcedSet.has(n)).map(([n, why]) => {
+							const prot = protMain(n);
+							return h("tr", { key: n, style: { borderTop: "1px solid rgba(128,128,128,.15)" } },
+								h("td", { style: { ...td, fontFamily: "monospace", fontSize: 11 } }, n, badge(n)),
+								h("td", { style: { ...td, opacity: 0.75 } }, why),
+								h("td", { style: td, title: "勾选=入 baseline_deny: 之后创建/恢复的子代理不可见" }, h("input", { type: "checkbox", checked: denySet.has(n), onChange: () => toggleName(n) })),
+								h("td", { style: td, title: prot ? "主会话核心能力: 裁掉会让该会话失去基础作业能力(会照裁, 请确认)" : "勾选=入 main_deny: 之后创建/恢复的主会话不可见" }, h("input", { type: "checkbox", checked: mainDenySet.has(n), onChange: () => toggleMain(n) })));
+						}))) : h("div", { style: { fontSize: 11, opacity: 0.6, marginTop: 6 } }, "运行时快照未就绪 —— 保留清单暂不显示(刷新重试)。")),
 					h("div", { style: { background: "rgba(232,163,61,.06)", border: "1px solid rgba(232,163,61,.2)", borderRadius: 6, padding: 8, marginTop: 10 } },
 						h("b", { style: { fontSize: 12 } }, "主会话禁用清单(main_deny)"),
 						h("span", { style: { fontSize: 11, opacity: 0.65, marginLeft: 8 } }, draft.main_deny.length + " 名 · 对之后创建/恢复的主会话隐藏(子代理不受影响); 保护件自动剔除; 按角色叠加见「主会话与访问」页"),
@@ -514,7 +639,10 @@ window.__ModuleLoader__.load({
 								h("div", null, "· 🆕 待裁决(pending): 新工具被闸门默认拦(仅子代侧)。裁决: 「闸门与发现」Tab 四键(子代理禁/主会话禁/解读/放行)。"),
 								h("div", null, "· ⚠ 当前不可见(名单失效): 配置里有、运行时没有——成因三态: 来源停用/卸载(重装自动复效) / 工具改名 / 域会话专属 MCP(如 word·excel 只在域会话挂载, 条目冗余无害)。不是被谁禁用; 逐件归因见「闸门与发现」页。"),
 								h("div", null, "· 🔒 无法关闭(preset-scoped): subagent 等作用域名不归本面板管, 深度由 maxDepth 总闸管辖。")),
-							h("p", { style: { opacity: 0.7, marginTop: 6 } }, "始终保留不裁: " + KEEP)))),
+						/* [v0.14.2 修] 保留清单已独立成区(上, 带逐件理由与两层勾选);
+						 * 页脚旧的那行"始终保留不裁: …"是同一件事的自由文本版 ⇒ 删掉,
+						 * 免得两处措辞打架(旧行还谎报"不可勾选", 实际可勾)。 */
+						h("p", { style: { opacity: 0.7, marginTop: 6 } }, "🟢 常用件见本页上方「常用件」区(逐件理由 + 两层勾选)。")))),
 
 				/* ── Tab2: 按 preset/角色禁用 ── */
 				tab === "preset" && h("div", null,
@@ -561,6 +689,21 @@ window.__ModuleLoader__.load({
 							h("span", { style: { fontSize: 11, opacity: 0.7 } }, `${list.length} 件`),
 							(list || []).includes("dispatch_composed") ? h("span", { title: "面含派单权: 该子代可再派一级动态组装孙代", style: { fontSize: 10, color: "#e8a33d" } }, "⭐可带队") : null,
 							h("button", { onClick: () => editCaps((c) => { delete c[name]; }), style: { marginLeft: "auto", padding: "2px 8px", fontSize: 11, cursor: "pointer" } }, "删除")),
+						/* [v0.14.2 修] 每件工具标出**当前治理归属** —— 此前只有一坨 textarea,
+						 * 与 deny 体系完全脱节(不可解释): 看不到"这件在标签面里但子代理侧
+						 * 被 baseline 禁了"这类冲突, 也看不到"域会话专属、运行时不可见"。 */
+						h("div", { style: { display: "flex", flexWrap: "wrap", gap: 2, marginBottom: 6 } },
+							(list || []).map((n) => {
+								const o = originOf(n);
+								const deniedByBase = denySet.has(n);
+								const pending = pendingSet.has(n);
+								const notRuntime = !restrictable.has(n) && !forcedSet.has(n);
+								const tag = deniedByBase ? "baseline_deny(子代全裁)" : pending ? "🆕待裁决" : notRuntime ? "⚠运行时不可见" : "可见";
+								const color = deniedByBase ? "#c66" : pending ? "#6af" : notRuntime ? "#e8a33d" : "#7c8";
+								return h("span", { key: n, title: `${o.join(" — ")} · ${tag}`, style: { display: "inline-flex", alignItems: "center", gap: 3, marginRight: 8, fontSize: 10, opacity: 0.85 } },
+									h("code", null, n),
+									h("span", { style: { color } }, tag));
+							})),
 						h("textarea", { value: (list || []).join("\n"), onChange: (e) => editCaps((c) => { c[name] = e.target.value.split(/[\n,]/).map((s) => s.trim()).filter(Boolean); }), title: "每行一个工具名(或逗号分隔)", style: { width: "100%", minHeight: 80, fontFamily: "monospace", fontSize: 11, padding: 6, boxSizing: "border-box" } }))),
 					h("div", { style: { display: "flex", gap: 6, marginTop: 4 } },
 						h("input", { value: newCap, onChange: (e) => setNewCap(e.target.value), placeholder: "新标签名(如 vision / bio / report)", style: { flex: 1, padding: "5px 8px", fontSize: 12 } }),
@@ -596,6 +739,14 @@ window.__ModuleLoader__.load({
 										h("input", { type: "checkbox", checked: mainRoleSet.has(n), onChange: () => toggleMainRole(n) }),
 										h("code", null, n)))));
 						}),
+						/* [v0.14.2 修] 兜底分组: 该角色叠加名单里不在任何固定分组的工具
+						 * (第三方插件工具如 dsh_im_*) —— 此前本页无兜底 ⇒ 它们不可见不可勾。 */
+						mainRoleExtra(effMainRoleChoice).length ? h("div", { key: "_main_extra", style: { borderTop: "1px solid rgba(128,128,128,.15)", padding: "4px 0" } },
+							h("div", { style: { fontSize: 11, opacity: 0.7 } }, `➕ 其他额外禁用(${mainRoleExtra(effMainRoleChoice).length}) — 未归入上方固定分组的工具`),
+							h("div", { style: { display: "flex", flexWrap: "wrap", gap: 2 } },
+								mainRoleExtra(effMainRoleChoice).map((n) => h("label", { key: n, title: originOf(n).join(" — "), style: { display: "inline-flex", alignItems: "center", gap: 3, marginRight: 8, fontSize: 11, cursor: "pointer", opacity: mainRoleSet.has(n) ? 1 : 0.5 } },
+									h("input", { type: "checkbox", checked: mainRoleSet.has(n), onChange: () => toggleMainRole(n) }),
+									h("code", null, n))))) : null,
 						h("p", { style: { fontSize: 11, opacity: 0.65, marginTop: 4 } }, "运行时新工具的全局层裁决在「全局工具面」下栏的「主会话禁」列; 本表只管按角色叠加。"),
 						h("details", { style: { marginTop: 8 } },
 							h("summary", { style: { cursor: "pointer", fontSize: 11, opacity: 0.75 } }, "高级: 正面清单(main_preset_allow)与原始 JSON"),

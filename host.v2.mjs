@@ -587,11 +587,21 @@ function gateMain(agent) {
 			missing = allowCfg.filter((n) => !known.has(n));
 			if (applicable.length > 0) tools.restrict({ allow: applicable });
 		} else {
-			/* 保护集剔除 + 求交: 未知名记 missing(探针), 不 throw */
+			/* [v0.14.3 修·用户裁定] 保护集从**硬剔除**改为**警示但不阻断**。
+			 * 旧形态: main_deny / main_preset_extra_deny 里的保护件被**直接剔除**
+			 *   ⇒ 用户勾了没反应(host 悄悄丢弃)⇒ "保存成功却没生效"的回弹错觉,
+			 *   且与正面清单通道(main_preset_allow)行为矛盾(实测: 同一件 read,
+			 *   负面路径禁不掉、正面路径能禁掉)⇒ 同一能力两种结果, 不可解释。
+			 * 新形态: 保护件**照裁**, 但 warn + 台账记 blockedProtected 计数, 让用户
+			 *   知道"你禁的是主会话核心能力, 会话可能瘫"。用户裁定: **所有工具都应
+			 *   能在 preset 中禁用; 全禁只剩 chatbot 也没问题** ⇒ 工具面治理不该
+			 *   替用户做"手滑保护"决定, 只该如实执行并告知后果。
+			 * ★ 保留 PROTECTED_MAIN 这个集合的**唯一用途**降级为"警示白名单"
+			 *   (前端也用它做提示文案), 不再是裁剪闸。 */
 			const wantedRaw = deny;
 			blocked = wantedRaw.filter((n) => PROTECTED_MAIN.has(n));
-			if (blocked.length) warn(`main_deny 含保护件(已剔除): ${blocked.join(",")}`);
-			const wanted = wantedRaw.filter((n) => !PROTECTED_MAIN.has(n));
+			if (blocked.length) warn(`main_deny 含主会话核心能力(已照裁, 提醒): ${blocked.join(",")}`);
+			const wanted = wantedRaw;   /* [v0.14.3] 不再剔除保护件 */
 			applicable = wanted.filter((n) => known.has(n));
 			missing = wanted.filter((n) => !known.has(n));
 			if (applicable.length > 0) tools.restrict({ deny: applicable });
@@ -1375,12 +1385,19 @@ USAGE_TOTAL.set(name, (USAGE_TOTAL.get(name) || 0) + 1);
 							const base = new Set(Array.isArray(cfg?.baseline_deny) ? cfg.baseline_deny : DEFAULT_BASELINE);
 							const mainDeny = new Set(Array.isArray(cfg?.main_deny) ? cfg.main_deny : []);
 							const extra = new Set(Array.isArray(cfg?.preset_extra_deny?.[preset]) ? cfg.preset_extra_deny[preset] : []);
+							/* [v0.14.2 修] 主会话按角色禁用(main_preset_extra_deny)此前**完全没被归因**
+							 * ⇒ depth0 主会话里被该表裁掉的工具, explain_gate 一律报 "dtg-unknown"
+							 * ⇒ 用户看到"被禁了但说不出为什么" = 报告缺失(不透明)。
+							 * 补齐它, 与 host 侧实际裁剪路径(host.v2.mjs:566 deny = [...main_deny, ...extraDeny])
+							 * **同源同序**: main_deny 先判, 再判本表。 */
+							const mainExtra = new Set(Array.isArray(cfg?.main_preset_extra_deny?.[preset]) ? cfg.main_preset_extra_deny[preset] : []);
 							const allowCfg = Array.isArray(cfg?.preset_allow?.[preset]) ? new Set(cfg.preset_allow[preset]) : null;
 							const denied = [];
 							for (const n of restrictable) {
 								if (visible.has(n)) continue;
 								let reason = "dtg-unknown";
 								if (depth === 0 && mainDeny.has(n)) reason = "main_deny(主会话显式名单)";
+								else if (depth === 0 && mainExtra.has(n)) reason = `main_preset_extra_deny(${preset})(主会话按角色禁用)`;
 								else if (depth > 0 && base.has(n)) reason = "baseline_deny(子代基线)";
 								else if (depth > 0 && extra.has(n)) reason = `preset_extra_deny(${preset})`;
 								else if (depth > 0 && allowCfg && !allowCfg.has(n)) reason = `preset_allow 正面清单外(${preset})`;
