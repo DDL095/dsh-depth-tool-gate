@@ -80,6 +80,21 @@ web_fetch(用户消息带链接时看一眼以判断派单)」)。
 ★ `preset_allow["cordis-router"]` 19 件**本来就含这两件**(当初照 brief 写的)
 ⇒ 补挂后名单正好对上, **无需改生产配置**。
 
+### 服务依赖安全性(生产先例坐实)
+
+`tool-ask-user` 的 inject = `["tools", "userQuestions"]`
+(`dsh-tool-ask-user/lib/index.js:216`) ⇒ 若 `userQuestions` 服务不在该 preset 的
+scope 链里, preset 挂载会因 `leakedServices` 抛错 ⇒ **生产启动失败级**风险。
+
+实测坐实安全: 生产 profile patch 里有 **10 处 `tool-ask-user` 启用行**(sci 系列 /
+word-deep / excel-deep / illus-deep 等), 那些 preset **每天成功挂载**(台账 depth0/
+depth1 记录为证) ⇒ 该挂法在生产已被先例证明安全。
+官方 `@deepseek-ai/dsh-web-app` 的 `presets/cordis.patch.yml:111-119` 也是**同款挂法**
+(preset 顶层、delegation 组外、`tool-ask-user` 启用 + `tool-web` 带 `fetch: true`)
+⇒ 本批改法与官方先例同构。
+★ 本批比官方多一行 `search: false`(router brief 明确「不检索库(web_search/MCP)」)
+⇒ 与 `cordis-sub` 段的 fetch/search 组合刻意不同, 已在代码注释写明。
+
 ### 判别力自证
 
 新增 `scripts/probe-router-v145.mjs`: **13 条断言 × 2 轮 + 阴性对照 = 27 项**。
