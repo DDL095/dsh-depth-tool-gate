@@ -210,7 +210,10 @@ window.__ModuleLoader__.load({
 	 * 且原文案"保留不动(不可勾选 deny)"与实情不符 —— host 侧无强制保留机制,
 	 * 写进 baseline_deny 照样会被裁)。保留清单现在是**面板建议**, UI 文案如实这么说。 */
 
-	/* [v0.10] 与 host PROTECTED_MAIN 同源镜像(host.v2.mjs 剔除+warn; 客户端预禁用防"保存成功却没生效"的回弹错觉) */
+	/* [v0.10→v0.14.4] 与 host PROTECTED_MAIN 同源镜像。用途**仅为提示文案**(勾选时提醒
+	 * "这是主会话核心能力, 裁了会话可能瘫"), **不是裁剪闸**: v0.14.3 起 host 侧保护件照裁
+	 * (只 warn + 台账计数), 客户端也不再置灰任何勾选框 —— 旧注释"剔除+warn / 预禁用防回弹"
+	 * 描述的是已废弃的硬剔除行为, 会误导后来者以为保护件不可禁。 */
 	const PROTECTED_MAIN_MIRROR = new Set(["ask_user_question", "exit_plan_mode", "todo_write", "read", "write", "edit", "glob", "grep", "working_directory", "shell", "pwsh", "terminal", "present", "web_search", "web_fetch", "skill", "subagent", "subagent_fork"]);
 	/* [v0.10] 解读提示词生成器: 自包含模板(全新 agent 会话零上下文可执行); 两层独立勾选 ⇒ VERDICT 四路直积 */
 	function buildAdjudicationPrompt(names, snapLine) {
@@ -225,7 +228,7 @@ window.__ModuleLoader__.load({
 			"",
 			"裁决语义(两层独立, 四种组合均合法):",
 			"- 子代理禁用(baseline_deny): 对【之后创建/恢复的子代理】不可见(可按角色豁免);",
-			"- 主会话禁用(main_deny): 对【之后创建/恢复的主会话】不可见(子代理不受影响; 保护件除外);",
+			"- 主会话禁用(main_deny): 对【之后创建/恢复的主会话】不可见(子代理不受影响; 核心能力也照裁, 只提示);",
 			"- 两层都禁(baseline_deny + main_deny) / 两层都留(默认, 无需操作)。",
 			"",
 			"执行要求:",
@@ -454,7 +457,11 @@ window.__ModuleLoader__.load({
 			 * ★ snap 未就绪时退化为"只看已有条目"(宁可少列, 不谎报有可选项)。 */
 			const mainRoleExtra = (role) => {
 				const own = new Set((draft && draft.main_preset_extra_deny && draft.main_preset_extra_deny[role]) || []);
-				const grouped = new Set(GROUPS.flatMap((g) => g.names || []));
+				/* ★ 与 subRoleRuntime 同理: 去重必须用 groupMembers(g)(展开 prefix 组)。
+				 *   moa 组是 prefix:"moa_"(client.js:151), 用 g.names 会漏掉全部 moa_ 工具
+				 *   ⇒ 它们会同时出现在上方 moa 组与本兜底区 = 双渲染。
+				 *   (v0.14.3 遗留缺陷, v0.14.4 一并修; MoA 盲审指正) */
+				const grouped = new Set(GROUPS.flatMap(groupMembers));
 				const runtime = snap ? (snap.restrictable || []) : [];
 				const pool = new Set([...runtime, ...own, ...(draft.baseline_deny || []), ...(draft.main_deny || [])]);
 				return [...pool].filter((n) => !grouped.has(n));
@@ -471,6 +478,26 @@ window.__ModuleLoader__.load({
 			const groupedNames = new Set(GROUPS.flatMap(groupMembers));
 			const extraOnly = [...effectiveDenySet].filter((n) => !groupedNames.has(n));
 			const presetGroups = extraOnly.length ? GROUPS.concat({ key: "extra", title: `➕ 其他额外禁用(${extraOnly.length})`, names: extraOnly, note: "由该角色 extra_deny 加入、未归入上方固定分组的工具" }) : GROUPS;
+			/* [v0.14.4 修] 子代按角色页补「运行时全量」候选池。
+			 * 缺陷(v0.14.3 漏修, 实测): 子代页的候选面 = 固定分组(GROUPS) ∪ 已裁决件
+			 *   (extraOnly) —— 任何**从未被禁用过**的工具(如 mcp__yuanbao-search__SearchPro)
+			 *   既不在任何固定分组里, 也从未进过 deny 名单 ⇒ **在子代按角色页根本不出现、
+			 *   无法按角色禁用**。v0.14.3 只给主会话页补了全量池(mainRoleExtra),
+			 *   子代页漏补 ⇒ 用户裁定"所有工具都应能在 preset 中禁用"只落地一半。
+			 * 修法: 与主会话页同构 —— 以运行时 restrictable 为主池, 给一个可折叠兜底区;
+			 *   勾选走 updatePresetRules(与上表同一套 allow/extra 语义, 不另起一套规则)。
+			 * ★ 去重: 减去 groupedNames(固定分组)与 effectiveDenySet(上表已列)
+			 *   ⇒ 同一件在本页只渲染一次(教训同 v0.14.4 常用件双渲染: 渲染面要唯一)。 */
+			const subRoleRuntime = () => {
+				const runtime = snap ? (snap.restrictable || []) : [];
+				/* ★ 去重必须用 groupMembers(g)(会展开 prefix 组), 不能用 g.names ———
+				 * moa 组是 prefix:"moa_"(client.js:151), 用 names 会漏掉全部 moa_ 工具
+				 *   ⇒ 它们会同时出现在上方 moa 组与本兜底区 = 双渲染(本批自引入缺陷,
+				 *   由 MoA 盲审指正)。教训: 去重集合与渲染集合必须用**同一取成员函数**。 */
+				const grouped = new Set(GROUPS.flatMap(groupMembers));
+				const own = new Set(selectedPreset ? (draft.preset_extra_deny[selectedPreset] || []) : []);
+				return [...new Set([...runtime, ...own])].filter((n) => !grouped.has(n) && !effectiveDenySet.has(n)).sort();
+			};
 			/* [v0.5] Tab5 能力标签辅助: 显示源=自定义表||内置; 编辑即固化自定义副本 */
 			const capsDisplay = (draft && draft.capabilities) || (data && data.default_capabilities) || {};
 			const capsCustom = !!(draft && draft.capabilities);
@@ -530,8 +557,16 @@ window.__ModuleLoader__.load({
 			 *   但那反而使它们**不可禁**(不在可裁决面里就没法勾选)⇒ 与用户裁定矛盾。
 			 *   用户裁定(2026-11-12): "所有工具都应能在 preset 中禁用; 全禁只剩 chatbot 也没问题"
 			 *   ⇒ 常用件(read/web_fetch/yuanbao 等)必须留在本区, 才能被勾选禁用。 */
-			const discovered = snap.restrictable.filter((n) => !ruledAll.has(n));
-			const snapLine = "运行时全局工具 " + snap.restrictable.length + " 件 · 已裁决 " + snap.ruledCount + " 件 · 未裁决 " + discovered.length + " 件 · 快照 " + fmtLocal(snap.ts) + "(↻ 刷新重取)";
+			/* [v0.14.4 修] 未裁决区排除「常用件」—— 常用件在本页下方有独立区, 且带
+			 * 「子代理禁 / 主会话禁」两列勾选框(直连 draft) ⇒ 两处都列 = 同一件渲染两遍
+			 * (用户报"yuanbao 重复"), 且勾选状态要两处同步才不会打架。
+			 * ★ 沿革(别被旧说法误导): v0.14.2 已排除过, 但当时我误以为"排除=不可禁"
+			 *   ⇒ v0.14.3 撤回排除(实测排除后常用件仍可在**下方常用件区**勾选禁用,
+			 *   排除只影响"未裁决区"这一处展示, 不影响可禁性) ⇒ v0.14.4 恢复排除。
+			 *   ⚠ 元教训: 「从 A 区排除」≠「从 B 区移除」——先确认 B 区是否另有勾选入口。 */
+			const keepInRuntime = snap.restrictable.filter((n) => KEEP_NAMES.has(n));
+			const discovered = snap.restrictable.filter((n) => !ruledAll.has(n) && !KEEP_NAMES.has(n));
+			const snapLine = "运行时全局工具 " + snap.restrictable.length + " 件 · 已裁决 " + snap.ruledCount + " 件 · 常用件 " + keepInRuntime.length + " 件(见下方「常用件」区, 可照常禁用) · 未裁决 " + discovered.length + " 件 · 快照 " + fmtLocal(snap.ts) + "(↻ 刷新重取)";
 			const openPrompt = (names, label) => {
 				const batch = names.filter((v, i, a) => a.indexOf(v) === i).slice(0, 8);
 				const text = buildAdjudicationPrompt(batch, snapLine) + (names.length > batch.length ? "\n\n(一次最多 8 件, 本批 " + batch.length + "/" + names.length + "; 余件请再生成一批)" : "");
@@ -541,7 +576,13 @@ window.__ModuleLoader__.load({
 			return h("div", null,
 				h("p", { style: { fontSize: 12, opacity: 0.75, margin: "6px 0" } }, snapLine,
 					snap.pending && snap.pending.length ? h("b", { style: { color: "#6af" } }, " · 🆕 待裁决 " + snap.pending.length + " 件(新工具已被闸门拦截, 见「闸门与发现」Tab)") : null),
-				discovered.length === 0 ? h("div", { style: { opacity: 0.6, fontSize: 12 } }, "全部运行时工具均已裁决。") :
+				/* [v0.14.4 修·MoA 指正] 空态文案必须与"排除常用件"后的口径一致:
+				 *   旧文案"全部运行时工具均已裁决"是**谎报** —— 常用件只是移到了下方
+				 *   「常用件」区(它们并未被裁决)。空态应说"未裁决区已空", 并指出
+				 *   常用件区仍在(它们照常可禁)。 */
+				discovered.length === 0 ? h("div", { style: { opacity: 0.6, fontSize: 12 } },
+					"未裁决区已空(运行时工具均已裁决)。",
+					keepInRuntime.length ? h("span", null, ` 常用件 ${keepInRuntime.length} 件见下方「常用件」区 —— 那里仍可勾选禁用。`) : null) :
 				h("div", null,
 					h("div", { style: { display: "flex", gap: 8, marginBottom: 6, alignItems: "center", flexWrap: "wrap" } },
 						h("select", { value: srcFilter, onChange: (e) => setSrcFilter(e.target.value), title: "按来源筛选", style: { fontSize: 11, padding: "2px 6px" } },
@@ -603,8 +644,7 @@ window.__ModuleLoader__.load({
 				 * 确认"这些是我要保留的、且知道为什么"。 */
 				h("div", { style: { background: "rgba(120,200,120,.05)", border: "1px solid rgba(120,200,120,.15)", borderRadius: 6, marginTop: 10 } },
 					h("b", { style: { fontSize: 12 } }, "🟢 常用件(逐件理由 · 可照常禁用)"),
-					h("div", { style: { fontSize: 11, opacity: 0.7, marginTop: 2 } }, "常用检索/文件/通信类工具。★ **没有任何工具是受保护的** —— 勾选即真禁; 不勾=两层都可见。禁用主会话核心能力(read/shell 等)会让会话瘫, 但这是你的选择, 系统只提示不阻拦。"),
-					/* [v0.14.2 修] 只显示**本 profile 运行时真的存在**的保留件。
+					h("div", { style: { fontSize: 11, opacity: 0.7, marginTop: 2 } }, "常用检索/文件/通信类工具。★ **没有任何工具是受保护的** —— 勾选即真禁; 不勾=两层都可见。禁用主会话核心能力(read/shell 等)会让会话瘫, 但这是你的选择, 系统只提示不阻拦。"),					/* [v0.14.2 修] 只显示**本 profile 运行时真的存在**的保留件。
 					 * 缺陷: KEEP_LIST 是**固定清单**, 装在别人 profile 里(没装 zotero/paddleocr
 					 * 等 MCP)会显示一堆不存在的工具 ⇒ 噪音 + 误导(看着像装坏了)。
 					 * 修法: 以运行时 restrictable 集合过滤; snap 未就绪时**不显示本区**
@@ -623,7 +663,7 @@ window.__ModuleLoader__.load({
 						}))) : h("div", { style: { fontSize: 11, opacity: 0.6, marginTop: 6 } }, "运行时快照未就绪 —— 保留清单暂不显示(刷新重试)。")),
 					h("div", { style: { background: "rgba(232,163,61,.06)", border: "1px solid rgba(232,163,61,.2)", borderRadius: 6, padding: 8, marginTop: 10 } },
 						h("b", { style: { fontSize: 12 } }, "主会话禁用清单(main_deny)"),
-						h("span", { style: { fontSize: 11, opacity: 0.65, marginLeft: 8 } }, draft.main_deny.length + " 名 · 对之后创建/恢复的主会话隐藏(子代理不受影响); 保护件自动剔除; 按角色叠加见「主会话与访问」页"),
+						h("span", { style: { fontSize: 11, opacity: 0.65, marginLeft: 8 } }, draft.main_deny.length + " 名 · 对之后创建/恢复的主会话隐藏(子代理不受影响); 核心能力照裁但会提示; 按角色叠加见「主会话与访问」页"),
 						h("textarea", { value: draft.main_deny.join("\n"), onChange: (e) => setDraft((d) => ({ ...d, main_deny: e.target.value.split(/[\n,]/).map((s) => s.trim()).filter(Boolean) })), title: "每行一个工具名", style: { width: "100%", minHeight: 80, fontFamily: "monospace", fontSize: 11, padding: 6, marginTop: 6, boxSizing: "border-box" } })),
 					h("details", { style: { marginTop: 12 } },
 						h("summary", { style: { cursor: "pointer", fontSize: 12 } }, "❓ 为什么有的工具看不见 / 被拦? (层级图例)"),
@@ -659,7 +699,25 @@ window.__ModuleLoader__.load({
 					presetError ? h("div", { style: { fontSize: 12, color: "#c66", marginBottom: 6 } }, presetError) : null,
 					selectedPreset ? h("div", null,
 						h("div", { style: { marginBottom: 6, fontSize: 12 } }, h("b", null, selectedPreset), ` · 有效禁用 ${effectiveDenySet.size} 项(全局 ${draft.baseline_deny.length} 项)`),
-						renderRuledTable(true)) : h("div", { style: { opacity: 0.65 } }, "请选择或输入一个角色 ID。"),
+						renderRuledTable(true),
+						/* [v0.14.4 修] 运行时全量兜底区: 让"从未被禁用过"的工具也能按角色禁用。
+						 * 与上方表去重(不减 own/不重复渲染), 勾选走同一套 updatePresetRules。 */
+						(() => {
+							const pool = subRoleRuntime();
+							if (!pool.length) return null;
+							return h("details", { style: { marginTop: 8 } },
+								h("summary", { style: { cursor: "pointer", fontSize: 12, opacity: 0.8 } }, `➕ 其他可按角色禁用的工具(${pool.length}) — 未归入上方分组, 且尚未被该角色禁用`),
+								h("div", { style: { fontSize: 11, opacity: 0.7, margin: "6px 0" } }, "★ 运行时真的可裁的全部工具(快照口径) —— 勾选=对该角色禁用(写入 preset_extra_deny; 若该件本就在全局底线里, 则改为在该角色**放行**); 未勾=继承全局。"),
+								h("div", { style: { display: "flex", flexWrap: "wrap", gap: 2 } },
+									pool.map((n) => h("label", { key: n, title: originOf(n).join(" — "), style: { display: "inline-flex", alignItems: "center", gap: 3, marginRight: 8, fontSize: 11, cursor: "pointer", opacity: 0.8 } },
+										/* [v0.14.4 修·MoA 指正] 勾选态用 effectiveDenySet(该角色**最终禁用**态),
+										 * 不能只看 selectedExtra: updatePresetRules 对"本就在 baseline_deny 里"
+										 * 的件, 取消禁用是写 preset_allow(放行)而不是删 extra
+										 *   ⇒ 只看 selectedExtra 会显示"未勾"但实际是禁用的(状态反了)。
+										 * 同理 pending(闸门待裁决)件也是全局禁用态, 也应显示为已禁。 */
+										h("input", { type: "checkbox", checked: effectiveDenySet.has(n) || pendingSet.has(n), onChange: () => setDraft((d) => updatePresetRules(d, selectedPreset, [n], !(effectiveDenySet.has(n) || pendingSet.has(n)))) }),
+										h("code", null, n), badge(n)))));
+						})()) : h("div", { style: { opacity: 0.65 } }, "请选择或输入一个角色 ID。"),
 					h("details", { style: { marginTop: 14 } },
 						h("summary", { style: { cursor: "pointer", fontSize: 12, opacity: 0.75 } }, "高级：全局原始名单与 preset JSON"),
 						h("p", { style: { fontSize: 12, opacity: 0.75 } }, "baseline_deny = 每行一个工具名(或逗号分隔)。preset_allow/preset_extra_deny = JSON 对象, 键=preset id, 值=工具名数组。"),

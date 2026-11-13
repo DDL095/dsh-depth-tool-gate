@@ -27,8 +27,10 @@
  *
  * ── 主会话裁剪的差异语义 ────────────────────────────────────────────────
  *   主会话只裁显式名单, 不进 lock/pending 体系(autoDenyNew 不波及主会话) ——
- *   主会话面本就是全局面, 新工具默认应当可见。PROTECTED_MAIN 保护集兜底,
- *   误裁核心工具会被剔除并告警, 防止手滑裁瘫主会话。
+ *   主会话面本就是全局面, 新工具默认应当可见。PROTECTED_MAIN 现仅作**警示白名单**:
+ *   名单里若含核心能力, 照裁 + warn 提醒后果(不再剔除)。
+ *   ★ 用户裁定(2026-11-12): "所有工具都应能在 preset 中禁用; 全禁只剩 chatbot 也没问题"
+ *     ⇒ 治理只如实执行 + 告知后果, 不替用户做"手滑保护"决定。
  *
  * ── 动态工具面组装(dispatch_composed) ───────────────────────────────────
  *   wrapper 工具 spawn 子代理 + 预挂 childId 通道 + agent/created 内的
@@ -241,8 +243,10 @@ const DEFAULT_CAPABILITIES = {
 	],
 };
 
-/* [v0.4] 主会话保护集: main_deny 名单中若出现这些名, 剔除并 warn——主会话核心
- * 作业/交互/编排能力, 裁掉即瘫痪(防手滑)。保护集外皆可裁(含 MCP)。 */
+/* [v0.4 起=v0.14.4 改语义] 主会话核心能力警示集: 名单里若出现这些名, **照裁**并 warn
+ * 提醒后果(会话可能瘫) —— 主会话核心作业/交互/编排能力。
+ * ★ v0.14.3 前是"硬剔除"(悄悄丢弃 ⇒ 勾了没反应的回弹错觉); 现只警示, 不阻断。
+ *   本集合的唯一用途 = 提示文案 + 提醒。保护集外皆可裁(含 MCP)。 */
 const PROTECTED_MAIN = new Set([
 	"ask_user_question", "exit_plan_mode", "todo_write",
 	"read", "write", "edit", "glob", "grep", "working_directory",
@@ -534,8 +538,9 @@ function readRecentAudit(limit, auditPath = AUDIT_PATH, archiveDir = AUDIT_ARCHI
 	return out;
 }
 
-/* ── v0.4 主会话裁剪: depth0 专用(只裁显式 main_deny 名单, 不进 lock/pending;
- *     PROTECTED_MAIN 剔除; 求交预过滤同子代理款, 未知名静默记 missing 不炸) ── */
+/* ── v0.4 主会话裁剪: depth0 专用(只裁显式 main_deny + main_preset_extra_deny 名单,
+ *     不进 lock/pending; v0.14.3 起 PROTECTED_MAIN 仅警示不剔除; 求交预过滤同子代理款,
+ *     未知名静默记 missing 不炸) ── */
 function gateMain(agent) {
 	try {
 		const cfg = readConfig();
@@ -592,7 +597,7 @@ function gateMain(agent) {
 			 *   ⇒ 用户勾了没反应(host 悄悄丢弃)⇒ "保存成功却没生效"的回弹错觉,
 			 *   且与正面清单通道(main_preset_allow)行为矛盾(实测: 同一件 read,
 			 *   负面路径禁不掉、正面路径能禁掉)⇒ 同一能力两种结果, 不可解释。
-			 * 新形态: 保护件**照裁**, 但 warn + 台账记 blockedProtected 计数, 让用户
+			 * 新形态: 保护件**照裁**, 但 warn + 台账记 blockedProtected 名单, 让用户
 			 *   知道"你禁的是主会话核心能力, 会话可能瘫"。用户裁定: **所有工具都应
 			 *   能在 preset 中禁用; 全禁只剩 chatbot 也没问题** ⇒ 工具面治理不该
 			 *   替用户做"手滑保护"决定, 只该如实执行并告知后果。
@@ -608,9 +613,9 @@ function gateMain(agent) {
 		}
 		const visibleAfter = tools.view(agent).visible.size;
 		SCOPES.set(agent.id, scoped);
-		const rec = { ts: new Date().toISOString(), agentId: agent.id, depth: 0, preset: preset || "(main)", mode, denied: mode === "allow" ? allowCfg.length : applicable.length, allowed: mode === "allow" ? applicable.length : undefined, pendingDenied: [], missing, visibleAfter };
+		const rec = { ts: new Date().toISOString(), agentId: agent.id, depth: 0, preset: preset || "(main)", mode, denied: mode === "allow" ? allowCfg.length : applicable.length, allowed: mode === "allow" ? applicable.length : undefined, pendingDenied: [], missing, visibleAfter, ...(blocked.length ? { blockedProtected: blocked } : {}) };
 		audit(rec);
-		log(`主会话裁剪: ${agent.id.slice(0, 24)} preset=${preset || "(main)"} mode=${mode} ${mode === "allow" ? `allow=${applicable.length}/${allowCfg.length}` : `deny=${applicable.length}`}${missing.length ? ` 缺名=${missing.length}` : ""}${blocked.length ? ` 保护剔除=${blocked.length}` : ""} 面=${rec.visibleAfter}`);
+		log(`主会话裁剪: ${agent.id.slice(0, 24)} preset=${preset || "(main)"} mode=${mode} ${mode === "allow" ? `allow=${applicable.length}/${allowCfg.length}` : `deny=${applicable.length}`}${missing.length ? ` 缺名=${missing.length}` : ""}${blocked.length ? ` 核心能力照裁=${blocked.length}` : ""} 面=${rec.visibleAfter}`);
 		return rec;
 	} catch (e) {
 		/* fail-open: 主会话裁剪失败绝不阻断启动; [v0.8.4 P1] 补台账让失败可对账 */
@@ -1136,7 +1141,7 @@ const gateSvc = {
 					: (curCfg.capabilities && typeof curCfg.capabilities === "object" ? { capabilities: curCfg.capabilities } : {})),
 			};
 			mkdirSync(profileDir(), { recursive: true });
-			atomicWrite(CFG_PATH(), JSON.stringify({ _note: "子代理工具面负面清单(dsh-depth-tool-gate)。baseline=depth>0 全裁; preset_allow=按 preset 豁免; preset_extra_deny=按 preset 加裁; main_deny=depth0 主会话显式裁(保护集兜底); autoDenyNew=lock 新见工具默认拦截; capabilities=能力标签表(dispatch_composed 动态面, 存在则整体覆盖内置, 删键恢复内置)。保存即生效(仅之后创建的 agent)。", ...next }, null, 1));
+			atomicWrite(CFG_PATH(), JSON.stringify({ _note: "子代理工具面负面清单(dsh-depth-tool-gate)。baseline=depth>0 全裁; preset_allow=按 preset 豁免; preset_extra_deny=按 preset 加裁; main_deny=depth0 主会话显式裁(核心能力照裁, 只提示); autoDenyNew=lock 新见工具默认拦截; capabilities=能力标签表(dispatch_composed 动态面, 存在则整体覆盖内置, 删键恢复内置)。保存即生效(仅之后创建的 agent)。", ...next }, null, 1));
 			/* 裁决权威=config: 保存后把 baseline 全员在 lock 建/标 seen(消 pending,
 			 * 含此前不在 lock 的手动新加名——否则下个 syncLock 会误弹 pending) */
 			const lock = readLock(); const now = new Date().toISOString();
@@ -1201,7 +1206,7 @@ const gateSvc = {
 				cfg.baseline_deny = [...base];
 				cfg.enabled = cfg.enabled !== false; cfg.autoDenyNew = cfg.autoDenyNew !== false;
 				mkdirSync(profileDir(), { recursive: true });
-				atomicWrite(CFG_PATH(), JSON.stringify({ _note: "子代理工具面负面清单(dsh-depth-tool-gate)。baseline=depth>0 全裁; preset_allow=按 preset 豁免; preset_extra_deny=按 preset 加裁; main_deny=depth0 主会话显式裁(保护集兜底); autoDenyNew=lock 新见工具默认拦截。保存即生效(仅之后创建的 agent)。", ...cfg }, null, 1));
+				atomicWrite(CFG_PATH(), JSON.stringify({ _note: "子代理工具面负面清单(dsh-depth-tool-gate)。baseline=depth>0 全裁; preset_allow=按 preset 豁免; preset_extra_deny=按 preset 加裁; main_deny=depth0 主会话显式裁(核心能力照裁, 只提示); autoDenyNew=lock 新见工具默认拦截。保存即生效(仅之后创建的 agent)。", ...cfg }, null, 1));
 			} else {
 				const base = new Set(Array.isArray(cfg.baseline_deny) ? cfg.baseline_deny : DEFAULT_BASELINE);
 				const clash = list.filter((n) => base.has(n));

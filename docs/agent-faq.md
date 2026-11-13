@@ -7,7 +7,7 @@
 子代理上下文预算治理插件。三层：L1 工具面裁剪（`tools.restrict` deny/allow）、L2 提示遮蔽（prompt-slim）、L2.5 per-role 引导（role-briefs）。**裁的对象是工具面**（省每轮 tools 参数的 token 与误用面），不裁知识、不改模型。
 
 ## Q2: 主会话会被裁吗？
-会。`main_deny`（config 一级键）对 **depth0 主会话**生效——只裁显式名单，`PROTECTED_MAIN` 保护集兜底防裁瘫（保护集**只在 deny 分支生效**，keep-only 分支不保护），新工具不波及主会话（autoDenyNew 不作用于 main）。**只对之后创建或恢复的会话生效**（已开的不追溯）。典型用法：低频大定义工具按需裁（当前在裁：文生图三件 generate_image/generate_images/edit_image）。
+会。`main_deny`（config 一级键）对 **depth0 主会话**生效——只裁显式名单，新工具不波及主会话（autoDenyNew 不作用于 main）。`PROTECTED_MAIN`（18 件核心能力）**不是裁剪闸**：名单里含核心能力时**照裁**，只 warn 提醒后果（会话可能瘫）并记台账 `blockedProtected`——这是既定设计，用户明确要求"所有工具都应能在 preset 中禁用"。**只对之后创建或恢复的会话生效**（已开的不追溯）。典型用法：低频大定义工具按需裁（当前在裁：文生图三件 generate_image/generate_images/edit_image）。
 
 ## Q3: 同一工具能否主会话和子代理分别裁？
 能，多套名单各管一层：`baseline_deny`（子代全局底线）→ `preset_extra_deny[preset]`（角色加裁）→ `preset_allow[preset]`（角色正面清单）→ `main_deny`（主会话）→ `main_preset_extra_deny[preset]` / `main_preset_allow[preset]`（主会话按角色）。同一工具名可出现在任意组合。

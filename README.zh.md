@@ -79,7 +79,7 @@ DSH 的子代理默认继承主会话的**全部工具**与**全部全局引导*
 
 **主会话**：若命中正面清单则转 keep-only（且**不叠加** `main_deny`）；否则裁 `main_deny` ∪ `main_preset_extra_deny[preset]`。注意 `main_preset_allow` 未设时会**回落**到共用的 `preset_allow[preset]` 键 —— 而共用键在主会话路径上同样是 keep-only。插件在这种回落发生时会告警，你能在宿主日志里看到。
 
-`PROTECTED_MAIN` 保护集（18 件核心工具：文件读写、规划、用户交互类……）会自动从 `main_deny` 里剔除。它**不作用于** keep-only 路径 —— 所以一个过窄的 `main_preset_allow` 仍能把 `read`/`write`/`shell` 从主会话里藏掉。`main_preset_allow` 要留得宽松，或者改用 `main_deny`。
+`PROTECTED_MAIN`（18 件核心工具：文件读写、规划、用户交互类……）**不是裁剪闸**：名单里含这些件时**照裁**，只 warn 提醒后果（会话可能瘫）并记台账 `blockedProtected`。设计取舍：工具面治理只如实执行用户选择并告知后果，不替用户做"手滑保护"决定（用户明确要求"所有工具都应能在 preset 中禁用"）。keep-only 路径（`main_preset_allow`）同样照裁。
 
 **生效时机**：配置热读，但只对**之后创建或恢复**的 agent 生效 —— 运行中的会话保持出生时的工具面。
 

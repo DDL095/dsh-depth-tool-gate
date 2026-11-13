@@ -77,7 +77,7 @@ For an agent running under a preset that mounts `role-briefs`, the module applie
 
 For a **main session**: if an allow-list applies it becomes keep-only (and `main_deny` is not layered on); otherwise `main_deny` ∪ `main_preset_extra_deny[preset]` is denied. Note that `main_preset_allow` falls back to the shared `preset_allow[preset]` key when the former is not set — and the shared key is keep-only on the main-session path too. The plugin logs a warning when that fallback happens, so you can spot it in the host log.
 
-A `PROTECTED_MAIN` set (18 core tools: file access, planning, the user-interaction tools…) is stripped from `main_deny` automatically. It does **not** apply to the keep-only path: a narrow `main_preset_allow` can therefore still hide `read`/`write`/`shell` from a main session. Keep `main_preset_allow` generous, or use `main_deny` instead.
+A `PROTECTED_MAIN` set (18 core tools: file access, planning, the user-interaction tools…) is **not a trimming gate**: naming one of them still trims it, and the plugin only warns about the consequence (a crippled session) and records it in the audit trail as `blockedProtected`. Tool-surface governance executes the user's choice faithfully and reports the outcome; it does not make "slip protection" decisions on the user's behalf (the user explicitly requires that every tool stay disable-able per preset). The keep-only path (`main_preset_allow`) trims them just the same.
 
 **Timing:** configuration is hot-read, but a change applies only to agents **created or resumed** after it — running sessions keep the surface they were born with.
 
