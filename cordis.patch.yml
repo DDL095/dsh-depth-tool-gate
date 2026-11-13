@@ -304,6 +304,23 @@
             name: '@deepseek-ai/dsh-tool-todo'
             config:
               allowParallelInProgress: true
+          # [v0.14.5 补] router 补挂 ask_user_question 与 web_fetch 两件。
+          #   缺陷(2026-11-13 实证): router preset 段**没挂**这两行, 也不在全局行 ⇒
+          #     两件工具在 router 会话里**任何层都不存在** ⇒ dtg 快照的 restrictableNames
+          #     里没有它们 ⇒ 报 missing、面板查不到、模型也调不到。
+          #   而 router brief 明确承诺要用它们:
+          #     · ask_user_question —— brief:「信息不足或目标含糊的请求, 先向用户澄清再派单」
+          #       (router 是零执行角色, 澄清是它唯一的交互出口);
+          #     · web_fetch —— brief:「唯一例外 web_fetch(用户消息带链接时看一眼以判断派单)」。
+          #   ⚠ 只补 web_fetch 不补 web_search: router brief 明确「不检索库(web_search/MCP)」,
+          #     故 tool-web 行只开 fetch、关 search(与 cordis-sub 段的 fetch/search 组合不同)。
+          - id: tool-ask-user
+            name: '@deepseek-ai/dsh-tool-ask-user'
+          - id: tool-web
+            name: '@deepseek-ai/dsh-tool-web'
+            config:
+              fetch: true
+              search: false
           - id: skill-filesystem
             name: '@deepseek-ai/dsh-skill-filesystem'
           - id: tool-skill

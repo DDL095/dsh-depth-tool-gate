@@ -2,6 +2,104 @@
 
 > 最新版本在前。版本号单一权威源 = `package.json`。条目中的 commit hash 是可校验的锚点。
 
+## v0.14.5 (2026-11-13) —— router 漏装根因修复批(自治理误杀 + 两件从未注册)
+
+用户报的现象: **"router 角色不能很好地组装相应的工具, 总是漏装或者不装相应的工具。"**
+
+### 症状(生产台账 5 条 depth0 router 记录恒定)
+
+```
+mode=allow  denied=19  allowed=17  missing=[ask_user_question, web_fetch]  visibleAfter=6
+```
+
+**允许了 17 件却只可见 6 件** —— 允许清单与实际可见面严重不符。
+
+### 根因: 不是宿主 bug, 是 dtg 自己两套裁剪叠加
+
+调查: qwen4-max-preview 子代理(只读)+ 主会话独立复核三环(file:line 级)。
+
+**① 落点错** —— `role-briefs.mjs` 的 v0.7.1「正面清单自治理」在 **preset 注册期**执行。
+`role-brief` 行挂在 preset 树内 ⇒ 其 ctx 的 scope = **preset generation key**
+(`dsh-agent-preset-registry/lib/index.js:511-513` `createScope(this.owner, key)` →
+`:219-236` `mountPreset` 在该 ctx 建树)。而 generation 又是 agent scope 的**父**
+(`:684-686` `bindScopeParent(key, generation.key)`) ⇒ 这份 restriction 被
+**所有 router 会话共享**、重启后按同逻辑重建、**恒久存在**。
+
+**② 视角错** —— 自治理用**无参 `view()`** = 纯全局层(`dsh-tools/lib/index.js:477-488`,
+scope=undefined ⇒ chainLayers 空、inherited 仅 global) ⇒ `preset_allow` 19 件里
+当时只有 6 件在全局层 ⇒ generation 层被永久钉上 allow-6:
+- **9 件 preset 行工具**(`subagent` / `subagent_fork` / `interrupt_agent` /
+  `list_agents` / `send_message` / `list_subagent_models` / `workflow` /
+  `todo_write` / `skill`)注册在 generation 层、**从不是全局工具** ⇒ 必被排除;
+- **2 件 illus 全局工具**(`preset_dispatch` / `preset_send_message`)虽是全局行,
+  但**晚于** router preset 激活才注册 ⇒ 执行时不在全球视图 ⇒ 也被排除。
+
+**③ 交集放大** —— `gateMain` 的 `restrict({allow:17})` 落 agent own 层, 但可见性 =
+`layers.every(layer => layer.admits(name))` **含祖先层**(`dsh-tools:492`,
+chainLayers 走 scope 父子链 `dsh-scope:162-169`)
+⇒ visible = 继承集 ∩ generationAllow6 ∩ agentAllow17 = **6**。
+
+实测可见集(会话日志 `request/header.tools` 解压实证, 非推断):
+`add_note, dispatch_composed, list_agent_presets, note_recent, note_search,
+working_directory` —— 该会话 8 次 tool/call 全在这 6 件内, **主派单通道 `subagent`
+一次都没用上**。
+
+### 修法
+
+**① 删掉 `role-briefs.mjs` 的自治理整段**(原 `:80-106`, 引入自 `a5d7791` v0.7.1)。
+
+它**本就是冗余**: 建它的初衷是"手开会话 `header.agentPreset` 不回写、`gateMain`
+判身份恒错"(见 `a5d7791` 提交说明)。但生产台账 **5 条 depth0 router 记录全部
+`preset=cordis-router`** ⇒ `gateMain` 本就能识别手开 router 会话并施加正面清单制
+⇒ 这份自治理纯属冗余且有害。删除后本插件职责 = **只注入 prompt 引导**。
+
+★ **连带面已核实(生产台账取证)**: 挂 `role-brief` 的 preset 在**两处**声明 ——
+包内 patch 的 4 个(`cordis-router` / `cordis-sub` / `dtg-shell` / `sci-lite`)与
+生产 profile patch 的 14 个(`sci-*` / `illus-deep` / `word-deep` / `excel-deep` /
+`ppt-deep` / `paint-deep` / `gallery-deep` / `aigen-deep` / `cordis-deep-ptc`)。
+自治理按 brief 名读 `config.preset_allow[brief]`, 故只有**既挂了 role-brief 又在
+`preset_allow` 有键**的会被命中 = `cordis-router` + `illus-deep` / `word-deep` /
+`excel-deep` / `ppt-deep` / `aigen-deep`。
+
+**实测五个域会话零影响**: 生产台账里这五个 preset 的记录**全部 depth=1**(子代路径,
+走 `gateAgent` 的豁免制), **从无 depth=0**; 且全生产 `mode=allow` 的记录**只有 5 条,
+全部是 depth0 + cordis-router** ⇒ 自治理在生产**只影响过 router 主会话**,
+域会话从未被它碰过 ⇒ 删除对它们**零影响**。
+
+★ 另: 生产 preset 声明有**两个来源**, 排查时必须同时查 ——
+① profile 的 `~/.dsh/profiles/web/cordis.patch.yml`(生产 15 个 preset, **无** router);
+② **包内** `node_modules/dsh-depth-tool-gate/cordis.patch.yml`(由包 `package.json`
+的 `dsh.bundle.patch` 声明, 含 cordis-router 等 4 个) ⇒ 生产 node_modules 是源仓
+symlink ⇒ 改源仓那份 = 改生产真正加载的那份。
+
+**② router preset 补挂两行**: `tool-ask-user` + `tool-web`(`fetch: true` /
+`search: false`)。这两件原先**根本没注册**(router 段无该行, 全局也无)
+⇒ 任何层都不存在 ⇒ 不在 `restrictableNames` ⇒ 报 missing、模型调不到;
+而 router brief 明确承诺要用它们(「信息不足先向用户澄清再派单」/「唯一例外
+web_fetch(用户消息带链接时看一眼以判断派单)」)。
+★ `preset_allow["cordis-router"]` 19 件**本来就含这两件**(当初照 brief 写的)
+⇒ 补挂后名单正好对上, **无需改生产配置**。
+
+### 判别力自证
+
+新增 `scripts/probe-router-v145.mjs`: **13 条断言 × 2 轮 + 阴性对照 = 27 项**。
+第二轮每条断言配一个**内存变异**(回退到修复前的样子)⇒ 必须转红; 第三轮阴性
+对照证明按内容判定。变异全程只改内存字符串, 不落盘不碰生产。
+
+★ 探针自身修正两处(v0.14.4 的教训延续): ①「不再读 preset_allow」这条断言改为
+**只看代码不看注释**(注释必须留沿革说明, 那不是"读配置做裁剪");
+②「两行在 delegation 组外」这条的变异体改为**真的把行移进组内**(原先只改 id 名
+⇒ 断言仍绿 = 无判别力)。
+
+### 未修项(如实记录)
+
+- `ask_user_question` / `web_fetch` 修好后**主会话面**应恢复到 17+2 = 19 件,
+  但**子代侧**(`cordis-sub`)不挂 `tool-ask-user`(其 `:147-149` 明确 `disabled: true`),
+  故子代面不含它 —— 属**有意设计**(子代理不该向用户提问), 不是漏装。
+- `preset_dispatch` / `preset_send_message` 两件 illus 全局工具**晚注册**问题:
+  删自治理后它们不再被 generation allow-6 误杀, 但若 `gateMain` 执行时它们仍未
+  注册, 仍会落 missing —— 需在重启后实测确认。
+
 ## v0.14.4 (2026-11-13) —— 渲染面唯一 + 子代全量可裁 + 文案诚实批
 
 用户报的现象: **"我看到 yuanbao 有重复"** —— 面板上同一件工具出现两遍。本批修三宗缺陷

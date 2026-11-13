@@ -73,37 +73,34 @@ export function apply(ctx, config) {
 		return () => {};
 	}
 	console.log(`[dtg-role-brief] 已注入 ${brief} 引导(_common${role === void 0 ? "" : "+" + brief} 共 ${text.length}B)`);
-	/* v0.7.1 正面清单自治理: 手开会话的 header.agentPreset=创建时默认值(UI select
-	 * 不回写), dtg gateMain 按 header 判身份对手开会话恒错——身份与裁剪同源解决:
-	 * 本插件天然知道 brief 身份, 行集激活时读 config.preset_allow[brief] 直接
-	 * restrict({allow})。delegation 子代仍由 gateChild 兜底(豁免制), 本处幂等。 */
-	try {
-		const tools = ctx.get("tools");
-		if (tools && typeof tools.restrict === "function" && typeof tools.view === "function") {
-			let allow = null;
-			try {
-				/* 配置目录按当前 profile 解析(与 host 同一口径): profileContext.dir 优先,
-				 * 缺省回落 profiles/web —— 避免 desktop/headless 等 profile 读错 profile 的策略。 */
-				let pdir = join(DSH_HOME, "profiles", "web");
-				try { const pc = ctx.get?.("profileContext"); if (pc && typeof pc.dir === "string" && pc.dir) pdir = pc.dir; } catch { /* 服务不可得→回落 */ }
-				const cfg = JSON.parse(readFileSync(join(pdir, "depth-tool-gate.config.json"), "utf8"));
-				const list = cfg?.preset_allow?.[brief];
-				if (Array.isArray(list) && list.length) allow = [...new Set(list)];
-			} catch { /* config 读不到→不自治理(交 dtg 路径) */ }
-			if (allow) {
-				/* 初筛: 无参 view=纯全局层可裁名(allow 名单基本全是全局行工具);
-				 * restrict 内部还会按 scoped known 复核, 未知名 throw→catch 降级 warn */
-				const known = tools.view()?.restrictableNames;
-				const applicable = known ? allow.filter((n) => known.has(n)) : allow;
-				if (applicable.length > 0) {
-					tools.restrict({ allow: applicable });
-					console.log(`[dtg-role-brief] 已自治理 ${brief} 工具面(正面清单 ${applicable.length}/${allow.length} 件)`);
-				}
-			}
-		}
-	} catch (e) {
-		console.warn(`[dtg-role-brief] 自治理跳过(${brief}): ${String((e && e.message) || e)}`);
-	}
+	/* [v0.14.5 删·根因修复] **正面清单自治理整段删除**(原 v0.7.1 引入, a5d7791)。
+	 *
+	 * 它是 router「允许 17 件却只可见 6 件」的**唯一根因**, 三重叠加:
+	 *   ① 落点错: 本插件挂在 preset 树内(cordis.patch.yml role-brief 行), 其 ctx 的
+	 *      scope = **preset generation key**(dsh-agent-preset-registry:511-513
+	 *      createScope(this.owner,key) → :219-236 mountPreset 在该 ctx 建树)。
+	 *      而 generation 是 agent scope 的**父**(:684-686 bindScopeParent) ⇒ 这份
+	 *      restriction 被**所有 router 会话共享**、重启后重建、恒久存在。
+	 *   ② 视角错: 无参 view() = **纯全局层** ⇒ preset_allow 19 件里当时只有 6 件在
+	 *      全局层 ⇒ generation 层被永久钉上 allow-6。preset 自己注册的 9 件行工具
+	 *      (subagent/workflow/todo_write/skill…) 从不是全局工具 ⇒ 必被排除。
+	 *   ③ 交集放大: gateMain 的 restrict({allow:17}) 落 agent own 层, 但可见性 =
+	 *      layers.every(admits) **含祖先层**(dsh-tools:492) ⇒ 17 ∩ 6 = 6。
+	 * 实测: router 主通道 `subagent` 被自己的治理代码永久禁掉(生产台账 5 条 depth0
+	 * 记录恒为 面=6; 会话日志 request/header 实取可见集 = add_note/dispatch_composed/
+	 * list_agent_presets/note_recent/note_search/working_directory)。
+	 *
+	 * ★ 为何可以删(它本就是冗余): 它建于此的初衷是"手开会话 header.agentPreset
+	 *   不回写、gateMain 判身份恒错"(见 git a5d7791 提交说明)。但生产台账 **5 条
+	 *   depth0 router 记录全部 preset=cordis-router**(header 读得出来)⇒ gateMain
+	 *   本就能识别手开 router 会话并施加正面清单制 ⇒ 这份自治理纯属冗余且有害。
+	 * ★ 唯一能写 generation 层 restriction 的就是本处(全插件 grep: host.v2.mjs 的
+	 *   8 处 restrict 全在 agent scope; 官方包仅 dsh-subagent 两处, 也是子代侧)。
+	 *
+	 * 本插件现在的职责 = **只注入 prompt 引导**, 裁剪权威一律归 dtg host 侧。
+	 * (若日后仍需"按 brief 身份裁剪", 正确做法是在 host 侧按 preset 键统一施加,
+	 *  落点必须是 agent scope —— 钉在共享祖先层的 restriction 会跨会话污染。)
+	 */
 	return () => {
 		try {
 			if (disposer && typeof disposer === "function") disposer();
