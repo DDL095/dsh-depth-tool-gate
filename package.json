@@ -1,6 +1,6 @@
 {
   "name": "dsh-depth-tool-gate",
-  "version": "0.15.0",
+  "version": "0.15.1",
   "private": false,
   "type": "module",
   "description": "Deny-list tool-surface gating for DSH agents: scope subagent and main-session tool visibility, gate newly appearing tools, compose minimal tool surfaces on demand, and audit every decision.",
@@ -66,6 +66,8 @@
     "docs/banner.svg",
     "docs/gating-flow.svg",
     "docs/gating-flow.zh.svg",
+    "docs/gate-flow-v015.drawio",
+    "docs/gate-flow-v015.png",
     "docs/assets/icon-180.png"
   ],
   "peerDependencies": {

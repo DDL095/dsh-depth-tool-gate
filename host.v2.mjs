@@ -2085,7 +2085,7 @@ USAGE_TOTAL.set(name, (USAGE_TOTAL.get(name) || 0) + 1);
 		try {
 			const reg = registerTool(ctx, {
 				name: "explain_gate",
-				description: "只读解释当前 agent 的工具面治理: 返回可见工具数、被 dtg 裁掉的工具名与原因归因(baseline_deny/main_deny/preset deny/preset_allow 正面清单外/lock pending)。派单失败诊断、子代理自检、面板口径对账用。不修改任何状态。",
+				description: "只读解释当前 agent 的工具面治理: 返回可见工具数、被 dtg 裁掉的工具名与原因归因(preset_rules.deny 用户显式禁用/main_deny/main_preset_extra_deny/baseline_deny/preset_extra_deny/preset_allow 正面清单外/lock pending 待裁决/lock preset 自带工具不在本会话挂载范围)。派单失败诊断、子代理自检、面板口径对账用。不修改任何状态。",
 				timeoutMs: undefined,
 				parameters: { type: "object", properties: {} },
 				output: {
@@ -2141,6 +2141,15 @@ USAGE_TOTAL.set(name, (USAGE_TOTAL.get(name) || 0) + 1);
 								else if (depth > 0 && extra.has(n)) reason = `preset_extra_deny(${preset})`;
 								else if (depth > 0 && allowCfg && !allowCfg.has(n)) reason = `preset_allow 正面清单外(${preset})`;
 								else if (lock.tools[n]?.state === "pending") reason = "lock pending(新工具待裁决)";
+								/* [v0.15 补] preset 态归因(来源感知 pending 引入的新状态):
+								 *   lock 的 state 有四态: seen / pending / forced / **preset**。
+								 *   preset = 该工具由**某个 preset 自行声明**(域 MCP 等), 按来源感知
+								 *   规则不进自动闸门 ⇒ 它若不可见, 原因必在**其它**通道(上面已判完)
+								 *   或来自别的 preset 的挂载。
+								 *   ⇒ 补这一档, 避免落到 "dtg-unknown"(报告缺失)。
+								 *   注意: 顺序放在最后 —— preset 态是「归属」而非「裁剪原因」,
+								 *   不能盖住上面更具体的归因。 */
+								else if (lock.tools[n]?.state === "preset") reason = `preset 自带工具(${preset})(不在本会话的挂载范围)`;
 								else if (lock.tools[n]?.state === "denied") reason = "lock denied(已裁决拒绝)";
 								denied.push({ name: n, reason });
 							}

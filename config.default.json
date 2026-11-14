@@ -1,10 +1,13 @@
 {
-  "_note": "子代理工具面负面清单(dsh-depth-tool-gate)。baseline=depth>0 全裁; preset_allow=按 preset 豁免; preset_extra_deny=按 preset 加裁; main_deny=depth0 主会话显式裁(核心能力照裁, 只提示, 无任何强制保护); autoDenyNew=lock 新见工具默认拦截; capabilities=能力标签表(dispatch_composed 动态面, 存在则整体覆盖内置, 删键恢复内置)。本文件的 baseline_deny 与 host 内置 DEFAULT_BASELINE 同源同值(由内置表生成); 缺省策略=host 内置表, 面板保存以本文件为准。保存即生效(仅之后创建的 agent)。",
+  "_note": "子代理工具面负面清单(dsh-depth-tool-gate)。baseline=depth>0 全裁; preset_allow=按 preset 豁免; preset_extra_deny=按 preset 加裁; main_deny=depth0 主会话显式裁(核心能力照裁, 只提示, 无任何强制保护); autoDenyNew=lock 新见工具默认拦截; capabilities=能力标签表(dispatch_composed 动态面, 存在则整体覆盖内置, 删键恢复内置)。本文件的 baseline_deny 与 host 内置 DEFAULT_BASELINE 同源同值(由内置表生成); 缺省策略=host 内置表, 面板保存以本文件为准。保存即生效(仅之后创建的 agent)。 preset_rules=每 preset 专属配置(见 docs/preset-policy.md §3.3)。",
   "enabled": true,
   "preset_allow": {},
   "preset_extra_deny": {},
   "preset_supplement": [],
   "preset_deny": [],
+  "preset_rules": {
+    "_note": "每 preset 一份专属配置(docs/preset-policy.md §3.3)。deny=该 preset 内显式禁用(无豁免); exempt=豁免哪些自动机制(本期只支持 \"auto\"=不受理 autoDenyNew 自动闸门; 只影响 pending 通道, 底线闸与显式禁用照常生效); allow=严格 keep-only 正面清单(null=不启用, 默认不启用 —— 启用会裁掉域 preset 自带的工具)。非法值在保存时被拒绝(fail-loud)。"
+  },
   "baseline_deny": [
     "generate_image",
     "generate_images",
