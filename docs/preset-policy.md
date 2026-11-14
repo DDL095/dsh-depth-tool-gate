@@ -237,7 +237,7 @@ natural_face(preset) = 全局层 G  ∪  归属集 origin=preset:<id>
 | 档 | 配置 | 效果 | 是否与用户原则冲突 | 本期 |
 |---|---|---|---|---|
 | 档 1 | `exempt: ["auto"]` | 不受自动发现闸门；**显式 deny 照生效，底线闸照生效** | ❌ 不冲突 | ★ **已裁决采用** |
-| 档 2 | `exempt: ["auto","baseline"]` | 连底线闸也豁免 | ⚠️ 需治理授权 | ❌ 本期不实现 |
+| 档 2 | `exempt: ["auto","baseline"]` | 连底线闸也豁免 | ❌ **不冲突**（能力已存在，见下） | ⚠️ **不实现独立入口**（见下） |
 | 档 3 | 全局豁免 + 不可禁 | —— | ❌ **不做**：与「所有工具都可以在 preset 中禁用」正面冲突 | ❌ 不做 |
 
 ⇒ 域 preset 的正确默认是**档 1**：保住能力，同时保留用户随时禁用的能力。
@@ -247,6 +247,58 @@ natural_face(preset) = 全局层 G  ∪  归属集 origin=preset:<id>
 「配了却不生效」正是本插件自己批判过的静默失败族。
 ⇒ 实现上：`exempt` 的取值域本期只接受 `["auto"]` 与 `[]`；
 出现 `"baseline"` ⇒ **fail-loud**（拒绝保存 + 明确文案），而不是接受后当没看见。
+
+#### ★ 更正：档 2 的能力**早已存在**，缺的不是授权而是独立入口（2026-11-14 实测）
+
+本节原写「档 2 需治理授权」。**该表述与事实不符**，已更正：
+
+`effectiveDeny()` 的实现里，底线闸的豁免集**就是** `preset_allow[preset]`：
+
+```js
+const exempt = new Set(cfg?.preset_allow?.[preset] || []);
+const legacy = [...new Set([...base, ...pending].filter((n) => !exempt.has(n)).concat(extra))];
+//  ↑ base = baseline_deny        ↑ exempt 就是 preset_allow[preset]
+```
+
+⇒ **「豁免底线闸」这件事，存量机制早就在做**，且已在生产使用：
+
+| preset | `preset_allow` 件数 | 与 `baseline_deny` 的交集 |
+|---|---|---|
+| illus-deep | 6 | **6 件**（image 六件全部豁免） |
+| aigen-deep | 6 | **6 件** |
+| cordis-router | 19 | **4 件**（`dispatch_composed` / `preset_dispatch` / `preset_send_message` / `ask_user_question`） |
+| ppt / excel / word-deep | 3 / 59 / 120 | 0（这些是正向白名单，与底线闸无交集） |
+
+⇒ 所以档 2 的真实状态是：
+
+| 原表述 | 修正后 |
+|---|---|
+| 「档 2 需治理授权」 | ❌ 不需要 —— 放开底线闸**已经是既有能力**，不新增任何权限 |
+| 「档 2 本期不实现」 | ⚠️ 准确说法 = **不实现独立配置入口**（`preset_rules.exempt` 仍只认 `"auto"`） |
+| 档 3 不做（与用户原则冲突） | ✅ 仍成立 |
+
+**为什么仍不单独做档 2 入口**：净收益接近零（能力已由 `preset_allow` 承担），
+却要引入**第三个语义面** —— 两个豁免源（`preset_allow` / `preset_rules.exempt`）
+的交互规则需明确定义与测试。而根子上的问题是 **`preset_allow` 的双语义还没拆干净**：
+
+- **子代侧**（depth>0）= **豁免集**（`base ∪ pending − exempt`）
+- **主会话侧**（depth 0）= **keep-only 正面清单**（`restrict({allow})`）
+
+同一张表两种强度。v0.15 已把主会话侧拆到 `main_preset_allow`（子代侧因
+「存量语义逐字保真」保留原状），但子代侧的**命名与定位**仍需归位。
+
+⇒ **建议顺序**：先把 `preset_allow` 子代侧正式归位到「豁免集」的正式语义
+（`preset_rules.exempt` 的对应位置）⇒ 档 2 随之成为「已有语义的正式命名」，
+**不需要新增能力**，也不需要新增语义面 ⇒ 独立立项。
+
+#### `exempt` 档 1 的作用域（已实测）
+
+`exemptsAuto(rules)` 只影响 **pending（自动发现）通道**，且是 **per-preset**：
+
+- 该 preset 的 pending 件不并入它的 deny 集；
+- 底线闸 / `preset_extra_deny` / 显式 `deny` **照常生效**（档 1 的定义）；
+- **不是**全局关闭 `autoDenyNew` —— 别的 preset 仍照常被自动闸门管
+  （全局闸门不能被单个 preset 关掉）。
 
 ### 3.7 keep-only 严格面（`allow`）为何默认关闭
 

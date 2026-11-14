@@ -2093,8 +2093,34 @@ USAGE_TOTAL.set(name, (USAGE_TOTAL.get(name) || 0) + 1);
 					render: (_a, value) => {
 						try {
 							const v = typeof value === "string" ? JSON.parse(value) : value;
-							const d = (v?.denied || []).slice(0, 20).map((d2) => `  ✂ ${d2.name} — ${d2.reason}`).join("\n");
-							return [{ type: "text", text: `[explain_gate] 可见 ${v?.visibleCount ?? "?"}/${v?.restrictableCount ?? "?"} | 裁 ${v?.denied?.length ?? 0} 件\n${d || "  (无裁剪)"}` }];
+							const denied = Array.isArray(v?.denied) ? v.denied : [];
+							/* ★ [v0.15.2 修] 输出截断缺陷(实测坐实):
+							 *   原实现只展开前 **20** 条明细, 但抬头报的是**全量**件数
+							 *   ⇒ 域会话自查时看到「裁 61 件」却只有 20 条明细 ⇒ **看不到全貌**。
+							 *   (实测: word-deep 域会话裁 61 件只列出 20 条 —— 由该域子代理自行发现)
+							 *   ⇒ 这在「域会话自查」这个**本工具的核心用途**上是硬伤: 自查的价值就在于
+							 *     「完整地知道我缺了什么、被谁裁的」。
+							 *
+							 * ⇒ 改两层输出:
+							 *   ① **按归因分组的完整汇总**(件数永不截断)—— 这是「缺了什么」的完整答案,
+							 *     且紧凑(几十件往往只落在几个 reason 上);
+							 *   ② 逐件明细提高上限, 且**显式标注**还有多少件未展开。
+							 *   ★ 铁律: 绝不出现「报 N 件只列 M 条(M<N)且不声明」这种计数与明细不符的输出。
+							 */
+							const byReason = new Map();
+							for (const it of denied) {
+								const r = String(it?.reason || "dtg-unknown");
+								if (!byReason.has(r)) byReason.set(r, []);
+								byReason.get(r).push(String(it?.name || "?"));
+							}
+							const gsum = [...byReason.entries()].sort((a, b) => b[1].length - a[1].length || a[0].localeCompare(b[0]))
+								.map(([r, ns]) => `    · ${r} — ${ns.length} 件`).join("\n");
+							const LIMIT = 200;
+							const shown = denied.slice(0, LIMIT);
+							const rest = denied.length - shown.length;
+							const detail = shown.map((it) => `  ✂ ${it?.name} — ${it?.reason}`).join("\n");
+							const tail = rest > 0 ? `\n  ★ 还有 ${rest} 件未展开(其归因分布见上方汇总)` : "";
+							return [{ type: "text", text: `[explain_gate] 可见 ${v?.visibleCount ?? "?"}/${v?.restrictableCount ?? "?"} | 裁 ${denied.length} 件\n  按归因汇总:\n${gsum || "    (无)"}\n  逐件明细:\n${detail || "    (无裁剪)"}${tail}` }];
 						} catch (e) { return [{ type: "text", text: "[explain_gate] render 失败: " + String(e) }]; }
 					},
 				},
