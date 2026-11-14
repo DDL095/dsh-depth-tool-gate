@@ -146,7 +146,15 @@ window.__ModuleLoader__.load({
 			return ["来源未知", "宿主/插件新增, 未登记来源; 可在 client.js 的 ORIGIN 表补登记"];
 		}
 
-				const GROUPS = [
+				/* [v0.15 P1b] 固定分组 → **host 下发的自动分组**。
+				 * 旧形态: 7 个硬编码组共 40 件硬编码名单 ⇒ 已知 409 件里 369 件无组,
+				 *   新装 MCP 工具进不了任何组, 只能裸列在「未裁决」区。
+				 * 新形态: host 按 mcp__<server>__* 自动成组(host.v2.mjs autoGroups)
+				 *   ⇒ **新装 MCP server 天然有组可归**, 无需改代码。
+				 * ★ 硬编码表降级为**回退**(host 不可用时才用), 不再是权威源 ——
+				 *   消灭「client.js 是 host 的影子副本」这一 P1 类缺陷的共同土壤。
+				 *   注意: 硬编码表仍被 originOf/常用件等引用, 故**保留不删**。 */
+				const GROUPS_FALLBACK = [
 			{ key: "画廊", title: "🎨 图像生成与画布(6)", names: ["generate_image", "generate_images", "edit_image", "find_inspiration", "canvas_state", "view_canvas"], note: "图像生成与画布查看类工具" },
 			{ key: "moa", title: "🔬 多模型协作(9)", prefix: "moa_", note: "moa_ 前缀的多模型协作类" },
 			{ key: "管家", title: "🛡 宿主运维(5)", names: ["dsh_web_restart", "plugin_manager", "provenance_audit", "video_cap_probe", "simulate_prune"], note: "宿主重启与插件治理类" },
@@ -155,6 +163,16 @@ window.__ModuleLoader__.load({
 			{ key: "编排", title: "🌊 编排(1)", names: ["workflow"], note: "多代理编排入口" },
 			{ key: "MCP维护", title: "🔧 MCP 维护类(8)", names: ["mcp__research-tools__add_whitelist", "mcp__research-tools__auto_refresh_auth", "mcp__research-tools__cleanup_browser_auth", "mcp__research-tools__clear_cache", "mcp__research-tools__test_network", "mcp__research-tools__get_whitelist", "mcp__zotero__discover", "mcp__zotero__similar"], note: "检索服务的维护与配置类" },
 		];
+
+		/* 取分组: host 下发的自动分组优先; host 不可用/未就绪 ⇒ 回落硬编码表。
+		 * ★ 回落必须**可见**(组标题带来源标注), 否则用户会以为"自动归类没生效"。 */
+		const pickGroups = (snap) => {
+			const fromHost = Array.isArray(snap?.groups) && snap.groups.length
+				? snap.groups.map((g) => ({ ...g, title: g.title || g.key, names: g.names || [], note: g.note || "", fromHost: true }))
+				: null;
+			if (fromHost) return fromHost;
+			return GROUPS_FALLBACK.map((g) => ({ ...g, fromHost: false }));
+		};
 
 		/* [v0.14.2→v0.14.3] 「常用件表」= 结构化清单 + 逐件用途。
 		 * 沿革(别被旧说法误导):
@@ -290,6 +308,21 @@ window.__ModuleLoader__.load({
 			return { ...d, preset_allow: nextAllow, preset_extra_deny: nextExtra };
 		}
 
+		/* [v0.15 P1a] 改 preset_rules 的某个键(纯 draft 操作; 落盘仍走 save)。
+		 * ★ 面板只写**已支持的字段**; 校验由 host 的 normalizePresetRules 在保存时做
+		 *   (写侧 fail-loud ⇒ 非法值拒绝整次保存, 不落盘半份配置)。
+		 * ★ 删一个 preset 的规则 ⇒ 整个键删掉(而不是留空对象)⇒ 与「未配」等价。 */
+		function setPresetRuleField(d, preset, field, value) {
+			if (!preset) return d;
+			const rules = { ...(d.preset_rules || {}) };
+			const cur = { ...(rules[preset] || {}) };
+			if (value === undefined || value === null) delete cur[field];
+			else cur[field] = value;
+			if (Object.keys(cur).length === 0) delete rules[preset];
+			else rules[preset] = cur;
+			return { ...d, preset_rules: rules };
+		}
+
 		function GatePanel({ callGate, listPresets }) {
 			const [data, setData] = React.useState(null);
 			const [draft, setDraft] = React.useState(null);
@@ -336,6 +369,8 @@ window.__ModuleLoader__.load({
 					/* [v0.11] 主会话按角色两键(手开 preset 会话专用, 与子代侧分离) */
 					main_preset_allow: cfg.main_preset_allow || {},
 					main_preset_extra_deny: cfg.main_preset_extra_deny || {},
+					/* [v0.15 P1a] preset_rules 三通道(每 preset 一份专属配置) */
+					preset_rules: (cfg.preset_rules && typeof cfg.preset_rules === "object") ? cfg.preset_rules : {},
 						/* [v0.5] 能力标签: config 有则带(自定义态), 无则不设键(内置态) */
 						...(cfg.capabilities && typeof cfg.capabilities === "object" ? { capabilities: cfg.capabilities } : {}),
 					});
@@ -437,6 +472,10 @@ window.__ModuleLoader__.load({
 			const th = { padding: "6px 10px", fontSize: 12, textAlign: "left", opacity: 0.8 };
 			const td = { padding: "5px 10px", fontSize: 12, verticalAlign: "top" };
 			const groupMembers = (g) => g.names || (draft.baseline_deny.concat(data.default_baseline || []).filter((n) => g.prefix && n.startsWith(g.prefix)));
+			/* [v0.15 P1b] 当前生效的分组: host 自动分组优先, 硬编码表仅回退。
+			 * ★ 单一取值点: 后面所有分组引用都用它, 不再散落引用硬编码表
+			 *   (散落引用 = 「同一件工具在两个面各渲染一次」的老坑)。 */
+			const groups = pickGroups(snap);
 
 			/* [v0.14.2 修] 主会话侧同样需要「兜底分组」。
 			 * 缺陷(2026-11-12 实测): 子代理页有 extraOnly 兜底(presetGroups), 主会话页
@@ -461,7 +500,7 @@ window.__ModuleLoader__.load({
 				 *   moa 组是 prefix:"moa_"(client.js:151), 用 g.names 会漏掉全部 moa_ 工具
 				 *   ⇒ 它们会同时出现在上方 moa 组与本兜底区 = 双渲染。
 				 *   (v0.14.3 遗留缺陷, v0.14.4 一并修; MoA 盲审指正) */
-				const grouped = new Set(GROUPS.flatMap(groupMembers));
+				const grouped = new Set(groups.flatMap(groupMembers));
 				const runtime = snap ? (snap.restrictable || []) : [];
 				const pool = new Set([...runtime, ...own, ...(draft.baseline_deny || []), ...(draft.main_deny || [])]);
 				return [...pool].filter((n) => !grouped.has(n));
@@ -475,9 +514,9 @@ window.__ModuleLoader__.load({
 			const selectedAllow = new Set(selectedPreset ? (draft.preset_allow[selectedPreset] || []) : []);
 			const selectedExtra = new Set(selectedPreset ? (draft.preset_extra_deny[selectedPreset] || []) : []);
 			const effectiveDenySet = new Set([...draft.baseline_deny.filter((n) => !selectedAllow.has(n)), ...selectedExtra]);
-			const groupedNames = new Set(GROUPS.flatMap(groupMembers));
+			const groupedNames = new Set(groups.flatMap(groupMembers));
 			const extraOnly = [...effectiveDenySet].filter((n) => !groupedNames.has(n));
-			const presetGroups = extraOnly.length ? GROUPS.concat({ key: "extra", title: `➕ 其他额外禁用(${extraOnly.length})`, names: extraOnly, note: "由该角色 extra_deny 加入、未归入上方固定分组的工具" }) : GROUPS;
+			const presetGroups = extraOnly.length ? groups.concat({ key: "extra", title: `➕ 其他额外禁用(${extraOnly.length})`, names: extraOnly, note: "由该角色 extra_deny 加入、未归入上方固定分组的工具" }) : groups;
 			/* [v0.14.4 修] 子代按角色页补「运行时全量」候选池。
 			 * 缺陷(v0.14.3 漏修, 实测): 子代页的候选面 = 固定分组(GROUPS) ∪ 已裁决件
 			 *   (extraOnly) —— 任何**从未被禁用过**的工具(如 mcp__yuanbao-search__SearchPro)
@@ -494,7 +533,7 @@ window.__ModuleLoader__.load({
 				 * moa 组是 prefix:"moa_"(client.js:151), 用 names 会漏掉全部 moa_ 工具
 				 *   ⇒ 它们会同时出现在上方 moa 组与本兜底区 = 双渲染(本批自引入缺陷,
 				 *   由 MoA 盲审指正)。教训: 去重集合与渲染集合必须用**同一取成员函数**。 */
-				const grouped = new Set(GROUPS.flatMap(groupMembers));
+				const grouped = new Set(groups.flatMap(groupMembers));
 				const own = new Set(selectedPreset ? (draft.preset_extra_deny[selectedPreset] || []) : []);
 				return [...new Set([...runtime, ...own])].filter((n) => !grouped.has(n) && !effectiveDenySet.has(n)).sort();
 			};
@@ -525,9 +564,9 @@ window.__ModuleLoader__.load({
 			/* ── 上栏: 已裁决面(config 硬名单, 分组表; 失效/forced 徽标) ── */
 			const renderRuledTable = (forPreset) => {
 				const activeSet = forPreset ? effectiveDenySet : denySet;
-				const groups = forPreset ? presetGroups : GROUPS;
+				const tableGroups = forPreset ? presetGroups : groups;
 				const extra1 = draft.baseline_deny.filter((n) => !groupedNames.has(n));
-				const shown = extra1.length && !forPreset ? groups.concat({ key: "_cfg_extra", title: `➕ 配置内未分组(${extra1.length})`, names: extra1, note: "baseline_deny 中不属于任何固定分组的条目" }) : groups;
+				const shown = extra1.length && !forPreset ? tableGroups.concat({ key: "_cfg_extra", title: `➕ 配置内未分组(${extra1.length})`, names: extra1, note: "baseline_deny 中不属于任何固定分组的条目" }) : groups;
 				return h("table", { style: { borderCollapse: "collapse", width: "100%" } },
 					h("thead", null, h("tr", null,
 						h("th", { style: th }, "组"), h("th", { style: th }, "禁用"), h("th", { style: th }, "名单(配置清单)"), h("th", { style: th }, "理由"))),
@@ -699,6 +738,70 @@ window.__ModuleLoader__.load({
 					presetError ? h("div", { style: { fontSize: 12, color: "#c66", marginBottom: 6 } }, presetError) : null,
 					selectedPreset ? h("div", null,
 						h("div", { style: { marginBottom: 6, fontSize: 12 } }, h("b", null, selectedPreset), ` · 有效禁用 ${effectiveDenySet.size} 项(全局 ${draft.baseline_deny.length} 项)`),
+						/* [v0.15 P1a/P1b] 「专属配置」区: 每 preset 一份(用户要的形态)。
+						 * 三条通道各有各的语义, 不合并:
+						 *   ① exempt "auto" = 该角色不受自动发现闸门(自动闸门只管全局层新增);
+						 *      ★ 底线闸(baseline_deny)与显式禁用照常生效 —— 治理只如实执行。
+						 *   ② preset_rules.deny = 该角色显式禁用(无豁免, 最强)。
+						 *   ③ preset_rules.allow = 严格正面清单(可选, 默认关; 启用会裁掉域工具,
+						 *      故默认不启用 —— 见 docs/preset-policy.md §3.7)。
+						 * + 拆键按钮(消除 preset_allow 的双语义, 行为不变只显式化)
+						 * + 该角色的「天然完整面」与归属信息(来自 host 归属表)。 */
+						(() => {
+							const rule = (draft.preset_rules || {})[selectedPreset] || {};
+							const face = (snap?.presetFaces || {})[selectedPreset] || null;
+							const fb = (data?.allow_fallbacks || []).find((x) => x.preset === selectedPreset);
+							return h("details", { style: { marginBottom: 10, border: "1px solid rgba(128,128,128,.2)", borderRadius: 4, padding: "6px 8px" } },
+								h("summary", { style: { cursor: "pointer", fontSize: 12, opacity: 0.85 } }, `🎛 专属配置(${selectedPreset})`),
+								h("div", { style: { fontSize: 11, opacity: 0.75, margin: "6px 0" } },
+									h("label", { style: { display: "inline-flex", alignItems: "center", gap: 4, marginRight: 12, cursor: "pointer" } },
+										h("input", {
+											type: "checkbox",
+											checked: Array.isArray(rule.exempt) && rule.exempt.includes("auto"),
+											onChange: (e) => setDraft((d) => {
+												const cur = (d.preset_rules?.[selectedPreset]?.exempt) || [];
+												const next = e.target.checked ? [...new Set([...cur, "auto"])] : cur.filter((x) => x !== "auto");
+												return setPresetRuleField(d, selectedPreset, "exempt", next);
+											}),
+										}),
+										h("span", null, "豁免自动发现闸门(exempt=auto)"),
+										h("span", { style: { opacity: 0.6 } }, " — 该角色不受「新工具自动拦截」; 底线闸与显式禁用照常生效")),
+									),
+									h("div", { style: { fontSize: 11, opacity: 0.7, margin: "4px 0" } },
+										`显式禁用 ${Array.isArray(rule.deny) ? rule.deny.length : 0} 项`,
+										rule.allow ? ` · 严格正面清单 ${rule.allow.length} 项(已启用)` : " · 严格正面清单未启用(默认)"),
+									h("div", { style: { display: "flex", gap: 8, flexWrap: "wrap", marginTop: 6 } },
+										h("button", {
+											disabled: !(Array.isArray(rule.deny) && rule.deny.length),
+											onClick: () => setDraft((d) => setPresetRuleField(d, selectedPreset, "deny", [])),
+											title: "清空该角色的显式禁用清单(回到继承全局)",
+											style: { padding: "3px 8px", fontSize: 11, cursor: "pointer" },
+										}, "清空显式禁用"),
+									),
+									/* 拆键: 消除 preset_allow 一张表两种强度(主会话 keep-only / 子代豁免)。
+									 * ★ 拆分**行为不变**(拆分前后主会话面逐件一致), 只把隐式回落变显式。 */
+									fb ? h("div", { style: { fontSize: 11, marginTop: 6, padding: "6px 8px", background: "rgba(232,163,61,.12)", borderRadius: 3 } },
+										h("div", null, `⚠ 此角色未配 main_preset_allow, 主会话正回落共用键 preset_allow(${fb.count} 件) —— 该键在主会话侧是 keep-only 正面清单, 在子代侧是 baseline 豁免集(一表两义)。`),
+										h("button", {
+											onClick: async () => {
+												setBusy(true); setMsg("拆分中…");
+												try {
+													const r = unwrap(await callGate("splitAllow", selectedPreset));
+													setMsg(r && r.ok ? `✅ 已拆分(${selectedPreset}): main_preset_allow ← preset_allow(${r.count} 件); 行为不变, 仅显式化` : "拆分失败: " + ((r && r.error) || "未知"));
+													setBusy(false); load();
+												} catch (e) { setMsg("拆分异常: " + String((e && e.message) || e)); setBusy(false); }
+											},
+											style: { padding: "3px 8px", fontSize: 11, cursor: "pointer", marginTop: 4 },
+										}, "拆分双语义键"),
+									) : null,
+									/* 天然完整面 + 归属(来自 host 归属表, 用户不写工具名) */
+									face ? h("div", { style: { fontSize: 11, opacity: 0.7, marginTop: 6 } },
+										`天然完整面 ${face.face ? face.face.length : 0} 件 = 全局层 + 本角色自带 ${face.ownCount} 件`,
+										face.servers && face.servers.length ? ` · 声明 MCP: ${face.servers.join(", ")}` : "",
+										face.unobserved ? " · ⚠ 该角色尚未观测到工具(声明了 MCP 但没开过会话; 工具真名由 server 的 tools/list 决定, 静态推不出)" : "",
+									) : null,
+								);
+						})(),
 						renderRuledTable(true),
 						/* [v0.14.4 修] 运行时全量兜底区: 让"从未被禁用过"的工具也能按角色禁用。
 						 * 与上方表去重(不减 own/不重复渲染), 勾选走同一套 updatePresetRules。 */
@@ -729,7 +832,18 @@ window.__ModuleLoader__.load({
 								h("textarea", { value: JSON.stringify(draft.preset_allow, null, 1), onChange: (e) => { try { setDraft((d) => ({ ...d, preset_allow: JSON.parse(e.target.value) })); } catch { /* 编辑中非法 JSON 不入 draft */ } }, onBlur: (e) => { try { setDraft((d) => ({ ...d, preset_allow: JSON.parse(e.target.value) })); } catch { setMsg("preset_allow 不是合法 JSON"); } }, style: { width: "100%", minHeight: 90, fontFamily: "monospace", fontSize: 11, padding: 6, boxSizing: "border-box" } })),
 							h("div", { style: { flex: 1, minWidth: 240 } },
 								h("div", { style: { fontSize: 12, marginBottom: 4 } }, h("b", null, "preset_extra_deny(按 preset 加裁)")),
-								h("textarea", { value: JSON.stringify(draft.preset_extra_deny, null, 1), onChange: (e) => { try { setDraft((d) => ({ ...d, preset_extra_deny: JSON.parse(e.target.value) })); } catch {} }, onBlur: (e) => { try { setDraft((d) => ({ ...d, preset_extra_deny: JSON.parse(e.target.value) })); } catch { setMsg("preset_extra_deny 不是合法 JSON"); } }, style: { width: "100%", minHeight: 90, fontFamily: "monospace", fontSize: 11, padding: 6, boxSizing: "border-box" } }))))),
+								h("textarea", { value: JSON.stringify(draft.preset_extra_deny, null, 1), onChange: (e) => { try { setDraft((d) => ({ ...d, preset_extra_deny: JSON.parse(e.target.value) })); } catch {} }, onBlur: (e) => { try { setDraft((d) => ({ ...d, preset_extra_deny: JSON.parse(e.target.value) })); } catch { setMsg("preset_extra_deny 不是合法 JSON"); } }, style: { width: "100%", minHeight: 90, fontFamily: "monospace", fontSize: 11, padding: 6, boxSizing: "border-box" } })),
+							/* [v0.15 P1a] preset_rules(每 preset 一份专属配置)—— 三通道:
+							 *   deny(显式禁用, 无豁免) / exempt(豁免哪些自动机制; 本期只支持 "auto")
+							 *   / allow(严格正面清单, 可选默认关)。
+							 * 落盘前由 host 的 normalizePresetRules 校验; 非法值(尤其未实现的 exempt 取值)
+							 * 会**拒绝整次保存**并给出明确文案(写侧 fail-loud)。 */
+							h("div", { style: { flex: 1, minWidth: 240 } },
+								h("div", { style: { fontSize: 12, marginBottom: 4 } }, h("b", null, "preset_rules(每 preset 专属配置)"),
+									h("span", { style: { fontSize: 10, opacity: 0.6, marginLeft: 6 } }, "{ presetId: { deny:[], exempt:['auto'], allow:null } }")),
+								h("textarea", { value: JSON.stringify(draft.preset_rules || {}, null, 1), onChange: (e) => { try { setDraft((d) => ({ ...d, preset_rules: JSON.parse(e.target.value) })); } catch { /* 编辑中非法 JSON 不入 draft */ } }, onBlur: (e) => { try { setDraft((d) => ({ ...d, preset_rules: JSON.parse(e.target.value) })); } catch { setMsg("preset_rules 不是合法 JSON"); } }, style: { width: "100%", minHeight: 90, fontFamily: "monospace", fontSize: 11, padding: 6, boxSizing: "border-box" } }))),
+						),
+					),
 
 				/* ── Tab2.5 [v0.5]: 能力标签(dispatch_composed 动态面) ── */
 				tab === "caps" && h("div", null,
@@ -787,7 +901,7 @@ window.__ModuleLoader__.load({
 							h("select", { value: effMainRoleChoice, onChange: (e) => setMainRoleChoice(e.target.value), style: { minWidth: 240, padding: "5px 8px", fontSize: 12 } },
 								presetOptions.filter((p2) => p2.id !== "__custom").map((p2) => h("option", { key: p2.id, value: p2.id }, p2.name && p2.name !== p2.id ? `${p2.name} (${p2.id})` : p2.id))),
 							h("span", { style: { fontSize: 11, opacity: 0.7 } }, `当前叠加 ${mainRoleSet.size} 项`)),
-						GROUPS.map((g) => {
+						groups.map((g) => {
 							const members = groupMembers(g);
 							const onCount = members.filter((n) => mainRoleSet.has(n)).length;
 							return h("div", { key: g.key, style: { borderTop: "1px solid rgba(128,128,128,.15)", padding: "4px 0" } },

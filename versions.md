@@ -2,6 +2,125 @@
 
 > 最新版本在前。版本号单一权威源 = `package.json`。条目中的 commit hash 是可校验的锚点。
 
+## v0.15.0 (2026-11-14) —— preset 工具面配方批(域工具误杀根治 + 每 preset 一份配置)
+
+用户诉求(跨三轮对话收敛): **"是不是应该基于每个 preset, 有一个专有工具过滤的配置?
+就每个 preset 可以彻底避免筛选的白名单?"**
+
+调研中挖出**比原诉求更严重的生产故障**, 故本批以「根治故障」为主、配方为辅。
+
+### 故障 A: 域 preset 自带工具被治理闸门整批误杀(实测坐实)
+
+`preset_dispatch(preset=illus-deep)` 实测会话**仅 60 件工具**, 67 件 `mcp__illustrator__*` +
+29 件 `mcp__illustrator-vec__*` **一件不可见** —— 而该 preset 的岗位引导明确承诺
+「Illustrator 绘图域, 67 绘图工具」。台账逐字坐实:
+
+```json
+{"preset":"illus-deep","depth":1,"denied":154,
+ "pendingDenied":["mcp__illustrator-vec__…","mcp__illustrator__…"],"visibleAfter":60}
+```
+
+**根因链**(每环有源码/实测支撑):
+
+1. preset 行注册的工具落在 **preset 层 = agent 的父层**(非 own 层)
+   ⇒ 工具名进 `view(agent).restrictableNames`(`dsh-tools/lib/index.js:489-491`);
+2. `syncLock` 把 known 里所有没见过的新名一律建 `pending`(`host.v2.mjs:356-374`);
+3. `pendingDeny` 无差别并入 deny 集(`host.v2.mjs:376-388`)
+   ⇒ 域 preset 被自己的闸门杀了自己的工具。
+
+**生产 lock 409 件逐件量化**: pending 280 / ∩`baseline_deny` **0** / 其中域工具 **278**
+(illustrator 96 / word 120 / excel 59 / ppt 3) / 全局层 ∩ preset 层 **0**
+⇒ **278 件误杀 100% 由 autoDenyNew 自动闸门造成, 用户一条配置都没写**。
+
+**修法**(来源感知 pending):
+
+- 新名按**来源**分类: 全局层 → `pending`(闸门拦) / preset 层 → `preset`(只记账, 不进 deny 集);
+- **存量 pending 重判**: 已存在的 pending 若不属全局层 ⇒ 改判 `preset`
+  (★ 关键: 改入参**不会**让已存在的 280 个 pending 自动消失, 重判是修复闭环的必要环节);
+- 重判**只降级不反向**, 且只动 `pending` 不动 `seen`/`forced`;
+- preset 层新名仍写进 lock(标 `state:"preset"`)⇒ 不产生审计盲区。
+
+### 故障 B: 同构的域 preset, 3 个完好 1 个全灭 ⇒ 机制缺陷非配置疏漏
+
+| preset | 声明应有 | 实测面 | 差集 |
+|---|---|---|---|
+| illus-deep | 156 | **60** | −96(域工具全灭) |
+| word-deep | 174 | 174 | 0 |
+| excel-deep | 113 | 113 | 0 |
+| ppt-deep | 57 | 57 | 0 |
+
+word/excel/ppt 侥幸完好是因为 `preset_allow` 抄全了各自 MCP 的全部工具名
+(word 120 / excel 59 / ppt 3)⇒ **现状要求用户逐件抄写每个域 preset 的全部 MCP 工具名**,
+MCP server 一升级就得重抄 —— 不可持续的配置形态。
+
+### 本批交付
+
+**① 来源归属表**(`profile/origin.json`)—— 每 preset 一份「它自带的工具」的真相:
+
+- 运行时权威 = `agentPresets.composedPreset(ctx)`(官方只读入口, 沿
+  `generationFor` → `scopeParentOf` 解析, `composeFrom` 继承分支也正确)
+  + `view(agent).knownNames ∖ view(undefined).knownNames`(非全局层 ⇒ 必来自 preset 层);
+- 静态兜底 = 从 profile patch / 包内 patch 扫 preset 块的 `serverName`
+  ⇒ 覆盖**尚未 mount** 的 preset(实测 15 个 profile preset 中 8 个带 MCP server);
+- 增量合并(并集去重, 不丢历史) + 每次 agent 创建时自动补全 + 损坏时重建不崩;
+- ★ 不用 `view(presetScopeKey)`: `registry.generations` 是私有 Map, 无公开入口。
+
+**② 按 MCP server 自动归类** —— 取代 `client.js` 硬编码的 7 组 40 件:
+
+`mcp__<server>__*` 按 server 成组 / `dsh_*` 第三方插件组 / `moa_*` MoA 组 / 其余原生组
+⇒ **新装 MCP server 天然有组可归, 不必改代码**(原形态: 已知 409 件里 369 件无组,
+新装工具只能裸列在「未裁决」区)。硬编码表降级为**回退**(host 不可用时才用)。
+
+**③ `preset_rules` 三通道**(用户要的「每 preset 一份专属配置」):
+
+```jsonc
+"preset_rules": { "<presetId>": { "deny": [], "exempt": ["auto"], "allow": null } }
+```
+
+- `deny` = 用户显式禁用 —— 最强, **无豁免**(`preset_allow` 的豁免权对它无效);
+- `exempt` = 豁免哪些自动机制 —— 本期**只支持 `"auto"`**(豁免 autoDenyNew 自动闸门),
+  **只影响 pending 通道**, 是 **per-preset** 的(豁免 A 不影响 B);
+  底线闸与显式禁用**照常生效**;
+- `allow` = 严格 keep-only 正面清单 —— **可选, 默认不启用**
+  (★ 五路异构盲审一致: keep-only 会裁掉域 preset 自己的工具,
+  生产先例 = `role-briefs` v0.7.1「allow 17 ⇒ visible 6」; 故降为可选严格模式);
+- 非法配置 **fail-loud**: 读侧(该 preset 规则不生效但会话照跑)与
+  写侧(拒绝整次保存、不落盘半份配置)两层口径一致 ⇒ 不出现「保存成功但运行期忽略」。
+
+**④ `preset_allow` 双语义拆键**(裁决③):
+
+同一张表两种强度(主会话侧 = keep-only 正面清单 / 子代侧 = baseline 豁免集)⇒
+拆为 `preset_allow`(子代, 语义逐字不变) + `main_preset_allow`(主会话)。
+**唯一的行为变更 = 回落读从静默改为显式告警**(台账 `allow-fallback` 事件 + 面板可见 +
+可一键拆分/撤销)⇒ 未拆分的 preset 主会话面与 v0.14.5 **逐件一致**(零缩面)。
+
+**⑤ 面板**: 逐 preset「天然完整面」(用户不写工具名)、自动归类、专属配置编辑面、
+拆键按钮、`explain_gate` 补 `preset_rules.deny` 归因(原先报 `dtg-unknown` = 报告缺失)。
+
+### 顺带修正的既有缺陷
+
+- `renderRuledTable` 的 `shown` 原来用 `GROUPS` 而非 `tableGroups`
+  ⇒ 按角色页渲染的是**全局组**而非该角色的组;
+- `explain_gate` 未认 `main_preset_extra_deny` 之外的 `preset_rules.deny`(补齐);
+- 探针纪律: 既有探针锚在具体变量名 `GROUPS.flatMap(groupMembers)` 上 ⇒ 重构后误报
+  ⇒ 改为断**语义**而非**写法**(本批沉淀的纪律)。
+
+### 迁移与闸门
+
+- **零缩面保证**: 旧键全部保留读时语义; 未配 `preset_rules` 的 preset 与 v0.14.5 逐件一致;
+- **golden 基线闸门**: 逐 `preset × depth` 采集运行面(visibleAfter/denied/missing),
+  迁移前后逐件 diff; 差集非空(面**变小**)⇒ 回滚;
+  ★ 三道可比性闸: 时间下界 / 配置指纹 / 每组 ts
+  (台账是跨版本历史累积, 882/909 条产自旧配置时代, 不可直接当基线);
+- 沙箱七步已过(test profile 3081: dtg 新版加载零异常、无 DEGRADED、hash 对账一致)。
+
+### 探针
+
+27 套探针全绿零回归; 本批新增 4 套(`probe-source-pending` 18 项 / `probe-allow-split` 18 项 /
+`probe-preset-rules` 22 项 / `probe-origin-groups` 19 项 / `probe-client-groups` 14 项 /
+`probe-sandbox-p0` 14 项 / `probe-golden-baseline` 闸门工具), 每条断言配变异通道
+(判别力 = **自己那条**必须转红) + 阴性对照。
+
 ## v0.14.5 (2026-11-13) —— router 漏装根因修复批(自治理误杀 + 两件从未注册)
 
 用户报的现象: **"router 角色不能很好地组装相应的工具, 总是漏装或者不装相应的工具。"**

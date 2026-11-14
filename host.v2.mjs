@@ -61,7 +61,8 @@
  */
 import { readFileSync, writeFileSync, mkdirSync, appendFileSync, existsSync, renameSync, statSync, readdirSync, unlinkSync, openSync, readSync, fstatSync, closeSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { join, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
 import { randomUUID } from "node:crypto";
 /* [v0.14.0 P0 根治] 原静态裸名 import 两个宿主 peer:
  *     import { TypertRemoteService } from "@deepseek-ai/dsh-typert-protocol";
@@ -126,6 +127,31 @@ function profileDir() {
 }
 const CFG_PATH = () => join(profileDir(), "depth-tool-gate.config.json");
 const LOCK_PATH = () => join(profileDir(), "depth-tool-gate.lock.json");
+/* [v0.15 §3.2] 归属表(来源真相): preset → 它自带的工具名集合。
+ * 用途: ①面板按 preset 推导「天然完整面」(用户不写工具名); ②自动归类(按 MCP server 成组);
+ *       ③来源感知 pending 的辅助(静态兜底, 见 globalToolNames 的运行时口径)。
+ * 落盘在 profile 目录(与 config/lock 同级), 随 preset 换代 / MCP 升级自动校正。
+ *
+ * ★ 文件名**不带插件前缀**(就叫 origin.json):
+ *   发布链 A17 断言「发布物不得残留旧包名」, 其白名单只登记了
+ *   .config.json / .lock.json / .usage.json 三个运行时数据文件。
+ *   若新文件沿用旧包名前缀 ⇒ A17 报红 ⇒ **发布链被拦死**
+ *   (实测踩到: probe-a17 5 pass/3 fail; 用基线副本对照确认是本次引入的真回归)。
+ *   ⇒ 选「不起旧包前缀」而非「给 A17 加白名单」: 白名单是发布链的**约束登记处**,
+ *     随意放宽会削弱该断言; 而 origin.json 不带前缀无语义损失(同在 profile 目录)。
+ *   ★ 注释里**不可写出**旧包名+origin.json 的组合(那会命中 A17 的扫描)。 */
+const ORIGIN_PATH = () => join(profileDir(), "origin.json");
+/* [v0.15 §3.2] 包内 patch 的绝对路径(静态兜底扫描用)。
+ * ★ 一次性算成**模块级常量**而非在函数体里用 import.meta.url:
+ *   ① import.meta 只能在 ESM 模块顶层用, 放进 new Function/eval 就 SyntaxError
+ *      ⇒ 探针抽取该函数时会崩(初版踩过)—— 常量可被探针注入覆盖;
+ *   ② 一次算好, 避免每次扫描重复解析 URL。 */
+const BUNDLED_PATCH_PATH = (() => {
+	try {
+		const p = new URL("./cordis.patch.yml", import.meta.url);
+		return fileURLToPath(p);
+	} catch { return ""; }
+})();
 const AUDIT_DIR = join(DSH_HOME, "logs", "depth-tool-gate");
 	const USAGE_PATH = () => join(profileDir(), "depth-tool-gate.usage.json"); /* 频率落盘快照(重启不清零) */
 	let USAGE_DIRTY = 0; /* 自上次落盘的调用计数(≥500 或面板拉取时 flush) */
@@ -343,48 +369,477 @@ function atomicWrite(file, data) {
 	writeFileSync(tmp, data, "utf8");
 	renameSync(tmp, file);
 }
-function writeLock(lock) {
+function writeLock(lock, lockPath = null) {
 	try {
 		lock.updatedAt = new Date().toISOString();
-		mkdirSync(profileDir(), { recursive: true });
+		const p = lockPath || LOCK_PATH();
+		mkdirSync(dirname(p), { recursive: true });
 		delete lock.anchorPending; /* 锚定标记不落盘 */
-		atomicWrite(LOCK_PATH(), JSON.stringify(lock, null, 1));
+		atomicWrite(p, JSON.stringify(lock, null, 1));
 	} catch (e) { warn("lock 写入失败(闸门降级为内存态): " + String((e && e.message) || e)); }
 }
 
-/* 把运行时观测合并进 lock: 新名→pending; forced 名补标。返回是否变化(变化才写盘)。 */
-function syncLock(lock, knownSet, cfg) {
+/**
+ * [v0.15 P1a] preset_rules 落盘前的**整体校验**（保存路径专用）。
+ *
+ * ★ 与运行期 resolvePresetRules 同口径（同一套取值域校验），但**语义不同**:
+ *   resolvePresetRules   = 读侧 fail-safe（非法 ⇒ 该 preset 规则不生效, 但会话照跑）
+ *   normalizePresetRules = 写侧 fail-loud（非法 ⇒ **拒绝整次保存**, 不落盘）
+ *   ⇒ 两层口径一致, 不会出现「保存成功但运行期忽略」的错位。
+ *
+ * @param {*} raw payload.preset_rules
+ * @returns {{ok:boolean, value:object, errors:string[]}}
+ */
+function normalizePresetRules(raw) {
+	const errors = [];
+	if (raw === undefined || raw === null) return { ok: true, value: {}, errors };
+	if (typeof raw !== "object" || Array.isArray(raw)) {
+		return { ok: false, value: {}, errors: ["preset_rules 必须是对象(按 preset id 索引)"] };
+	}
+	const out = {};
+	for (const [p, rec] of Object.entries(raw)) {
+		const pid = String(p).trim();
+		if (!pid) { errors.push("preset_rules 里有空的 preset id"); continue; }
+		if (!rec || typeof rec !== "object" || Array.isArray(rec)) {
+			errors.push(`preset_rules["${pid}"] 必须是对象`);
+			continue;
+		}
+		const cur = {};
+		if (rec.deny !== undefined && rec.deny !== null) {
+			if (!Array.isArray(rec.deny)) errors.push(`preset_rules["${pid}"].deny 必须是数组`);
+			else cur.deny = rec.deny.map(String).filter(Boolean);
+		}
+		if (rec.exempt !== undefined && rec.exempt !== null) {
+			if (!Array.isArray(rec.exempt)) errors.push(`preset_rules["${pid}"].exempt 必须是数组`);
+			else {
+				const ex = rec.exempt.map(String).filter(Boolean);
+				for (const e of ex) {
+					if (!EXEMPT_SUPPORTED.has(e)) {
+						errors.push(`preset_rules["${pid}"].exempt 含未实现的取值 "${e}" —— 本期只支持 ${[...EXEMPT_SUPPORTED].map((x) => `"${x}"`).join("/")}; 底线闸豁免档未实现, 拒绝保存(不静默忽略)`);
+					}
+				}
+				cur.exempt = ex;
+			}
+		}
+		if (rec.allow !== undefined && rec.allow !== null) {
+			if (!Array.isArray(rec.allow)) errors.push(`preset_rules["${pid}"].allow 必须是数组或 null`);
+			else cur.allow = rec.allow.map(String).filter(Boolean);
+		}
+		/* 只有显式给出的键才落盘(未给 = 用默认) */
+		out[pid] = cur;
+	}
+	return { ok: errors.length === 0, value: out, errors };
+}
+
+/* [v0.15 §3.3] preset_rules 解析与语义
+ *
+ * 用户要的「每个 preset 一份专属工具过滤配置」:
+ *   preset_rules[p] = { deny: string[], exempt: string[], allow: string[]|null }
+ *
+ * 三条通道**互相独立**(不同语义不得合并进同一张表的不同解释):
+ *   ① deny   = 用户显式禁用该 preset 内的这批工具 —— **最强, 无豁免**
+ *   ② exempt = 豁免哪些自动机制; 本期**只支持 "auto"**(豁免 autoDenyNew 自动闸门)
+ *   ③ allow  = 严格 keep-only 正面清单 —— **可选, 默认不启用**(见下)
+ *
+ * ★ 裁决①(2026-11-14 09:34): exempt 只做档1。
+ *   档2("baseline", 连底线闸一起豁免)**本期不实现**, 且必须 **fail-loud**:
+ *   配了就**拒绝**并明确报错, 绝不"接受后当没看见" ——
+ *   「配了却不生效」正是本插件自己批判过的静默失败族。
+ *
+ * ★ 裁决③ + 五路盲审: allow(严格 keep-only)**默认 null(不启用)**。
+ *   理由: keep-only 正面清单会裁掉域 preset 自己的工具(preset 层 = agent 父层
+ *   ⇒ 在 restrictableNames 内 ⇒ allow 缺项即裁), 生产先例 = role-briefs v0.7.1
+ *   「allow 17 ⇒ visible 6」。它唯一的独有能力(新工具默认不可见)改为
+ *   「默认不可见 + 可观测」的表述(严格说"不可能"不成立: own 层裁不掉、
+ *   exempt 本身是设计的合法漏洞)。
+ */
+
+/* 本期支持的 exempt 取值域(其它取值 ⇒ fail-loud) */
+const EXEMPT_SUPPORTED = new Set(["auto"]);
+
+/**
+ * 解析单个 preset 的规则(逐项校验, 坏值不静默通过)。
+ * @param {object} cfg 生效配置
+ * @param {string} preset preset id
+ * @returns {{ok:boolean, deny:string[], exempt:string[], allow:string[]|null, errors:string[]}}
+ */
+function resolvePresetRules(cfg, preset) {
+	const errors = [];
+	let deny = [], exempt = [], allow = null;
+	const raw = cfg?.preset_rules && typeof cfg.preset_rules === "object" ? cfg.preset_rules[preset] : undefined;
+	if (raw === undefined || raw === null) return { ok: true, deny, exempt, allow, errors };
+	if (typeof raw !== "object" || Array.isArray(raw)) {
+		errors.push(`preset_rules["${preset}"] 必须是对象(收到 ${Array.isArray(raw) ? "数组" : typeof raw})`);
+		return { ok: false, deny, exempt, allow, errors };
+	}
+	/* deny */
+	if (raw.deny !== undefined) {
+		if (!Array.isArray(raw.deny)) errors.push(`preset_rules["${preset}"].deny 必须是数组`);
+		else deny = raw.deny.map(String).filter(Boolean);
+	}
+	/* exempt */
+	if (raw.exempt !== undefined) {
+		if (!Array.isArray(raw.exempt)) errors.push(`preset_rules["${preset}"].exempt 必须是数组`);
+		else {
+			exempt = raw.exempt.map(String).filter(Boolean);
+			for (const e of exempt) {
+				if (!EXEMPT_SUPPORTED.has(e)) {
+					errors.push(`preset_rules["${preset}"].exempt 含未实现的取值 "${e}" —— 本期只支持 ${[...EXEMPT_SUPPORTED].map((x) => `"${x}"`).join("/")}(豁免自动发现闸门); 底线闸豁免档未实现, 拒绝静默忽略`);
+				}
+			}
+		}
+	}
+	/* allow: null = 不启用严格面; 数组 = 启用 */
+	if (raw.allow !== undefined && raw.allow !== null) {
+		if (!Array.isArray(raw.allow)) errors.push(`preset_rules["${preset}"].allow 必须是数组或 null`);
+		else allow = raw.allow.map(String).filter(Boolean);
+	}
+	return { ok: errors.length === 0, deny, exempt, allow, errors };
+}
+
+/**
+ * 规则是否豁免了自动发现闸门(exempt 含 "auto")。
+ * ★ 注意: 豁免只影响 **pending(自动发现)** 通道, **不影响** baseline_deny /
+ *   preset_extra_deny / 显式 deny —— 档1 的定义就是「不被自动闸门管,
+ *   但底线闸与显式禁用照生效」。
+ */
+function exemptsAuto(rules) {
+	return Array.isArray(rules?.exempt) && rules.exempt.includes("auto");
+}
+
+/* [v0.15 §3.4] 来源感知 pending 的闸门收窄。
+ * 规则豁免了 auto ⇒ 该 preset 的 pending 件不并入它的 deny 集。
+ * ★ 注意作用域: 这是 **per-preset** 的, 不是全局关闭 autoDenyNew ——
+ *   别的 preset 仍照常被自动闸门管(全局闸门不能被单个 preset 关掉)。 */
+function pendingDenyFor(lock, cfg, preset, rules) {
+	if (exemptsAuto(rules)) return [];
+	return pendingDeny(lock, cfg);
+}
+
+/* ── [v0.15 §3.2] 来源归属表 ───────────────────────────────────────────────
+ *
+ * 为什么需要(docs/preset-policy.md §3.2):
+ *   1) 面板要能按 preset 展示「天然完整面」⇒ 用户不写工具名;
+ *   2) 自动归类要按 MCP server 成组 ⇒ 新装 MCP 自动有组可归(取代硬编码 7 组 40 件);
+ *   3) 「某件工具属于哪个 preset 自带的」是**运行时事实**, 静态推不出
+ *      (MCP 工具名由 server 的 tools/list 决定)。
+ *
+ * ★ 归属的运行时权威来源:
+ *   `agentPresets.composedPreset(ctx)`(dsh-agent-preset-registry:733-735)
+ *   = 该 ctx 实际绑定的 preset id(沿 generationFor → scopeParentOf 解析,
+ *   composeFrom 继承分支也正确解析)⇒ 官方只读入口, 无需自建解析。
+ *   工具归属 = view(agent).knownNames ∖ view(undefined).knownNames
+ *   (即该 agent 看得到、但**不在全局层**的名字 ⇒ 必来自其 preset 层)。
+ *
+ * ★ 为什么不用 view(presetScopeKey):
+ *   registry.generations 是**私有 Map**, 无「按 preset id 取 scope key」的公开入口
+ *   ⇒ 面板无法用 scope key 推导面。改用「逐 agent 运行时观测 + 增量并入」,
+ *   随会话创建自动补全, 无需碰宿主私有结构。
+ *
+ * 落盘形态: { version:1, updatedAt, presets: { <id>: { tools:[...], servers:[...] } } }
+ */
+function emptyOrigin() { return { version: 1, updatedAt: new Date().toISOString(), presets: {} }; }
+
+function readOrigin() {
+	try {
+		if (!existsSync(ORIGIN_PATH())) return emptyOrigin();
+		const o = JSON.parse(readFileSync(ORIGIN_PATH(), "utf8"));
+		if (!o || typeof o !== "object" || !o.presets || typeof o.presets !== "object") {
+			warn("origin 表结构损坏 —— 重建(重建只丢归属缓存, 不影响裁剪)");
+			return emptyOrigin();
+		}
+		return { version: 1, updatedAt: o.updatedAt || "", presets: o.presets };
+	} catch (e) {
+		warn("origin 表读取失败(重建): " + String((e && e.message) || e));
+		return emptyOrigin();
+	}
+}
+
+/**
+ * 把一次观测到的 (preset → 工具名集合) 并入归属表。
+ * @param {Map<string, Set<string>>} delta preset id → 新增工具名集合
+ * @returns {boolean} 是否变化(变化才写盘)
+ */
+function mergeOrigin(delta) {
+	if (!delta || !delta.size) return false;
+	const o = readOrigin();
+	let changed = false;
+	for (const [p, names] of delta) {
+		if (!p || !names || !names.size) continue;
+		const cur = o.presets[p] && typeof o.presets[p] === "object" ? o.presets[p] : {};
+		const list = Array.isArray(cur.tools) ? cur.tools.map(String) : [];
+		const set = new Set(list);
+		for (const n of names) { if (!set.has(n)) { set.add(n); changed = true; } }
+		if (changed) o.presets[p] = { ...cur, tools: [...set] };
+	}
+	if (!changed) return false;
+	o.updatedAt = new Date().toISOString();
+	try {
+		mkdirSync(profileDir(), { recursive: true });
+		atomicWrite(ORIGIN_PATH(), JSON.stringify(o, null, 1));
+	} catch (e) { warn("origin 表写入失败(归属缓存缺失, 不影响裁剪): " + String((e && e.message) || e)); }
+	return true;
+}
+
+/**
+ * 采集一次归属: 取当前所有 agent 的 (有效 preset → 非全局层工具名)。
+ * @param {object} tools 服务句柄
+ * @returns {Map<string, Set<string>>}
+ */
+function collectOrigin(toolSvc) {
+	const delta = new Map();
+	try {
+		const agents = ROOT_CTX?.get?.("agents");
+		if (!agents?.list) return delta;
+		const globalNames = globalToolNames();
+		if (!globalNames) return delta;
+		const presetSvc = ROOT_CTX?.get?.("agentPresets");
+		for (const a of agents.list()) {
+			const ctx = a?.ctx;
+			if (!ctx) continue;
+			/* ★ 官方入口: 该 agent 实际绑定的 preset(沿 composeFrom 继承链解析) */
+			let pid = "";
+			try { pid = presetSvc?.composedPreset?.(ctx) || ""; } catch { /* keep */ }
+			if (!pid) {
+				/* 兜底: header 上的 preset 名(手开会话/投影缺失时) */
+				pid = a?.session?.header?.agentPreset || "";
+			}
+			if (!pid) continue;
+			let view = null;
+			try { view = toolSvc.view(a); } catch { continue; }
+			if (!view?.knownNames) continue;
+			let set = delta.get(pid);
+			if (!set) { set = new Set(); delta.set(pid, set); }
+			for (const n of view.knownNames) {
+				if (!globalNames.has(n)) set.add(n);
+			}
+		}
+	} catch (e) {
+		warn("collectOrigin 失败: " + String((e && e.message) || e));
+	}
+	return delta;
+}
+
+/**
+ * [v0.15 §3.2 静态兜底] 从 profile patch / 包内 patch 提取 preset → MCP serverName 映射。
+ *
+ * ★ 为什么需要静态兜底:
+ *   运行时观测(knownNames 差集)只能覆盖**已开过会话**的 preset;
+ *   静态声明能覆盖**尚未 mount** 的 preset(面板要列出全部 26 个 ——
+ *   registry.generations 是私有 Map, 无 scope key 可查, 源码坐实 M9)。
+ *
+ * ★ 静态只能给到 **serverName**(MCP 工具的真实名字由 server 的 tools/list 决定,
+ *   静态推不出)⇒ 静态产出的是「前缀归属」而非逐件名单:
+ *   serverName=s ⇒ 该 preset 拥有 mcp__s__* 系列的工具。
+ *   面板据此把「该 preset 尚未观测到但声明了 server」标出来(诚实显示"未观测"),
+ *   不伪造具体工具名。
+ *
+ * @param {string} bundledPatch 包内 patch 路径(模块级常量注入, 便于探针注入)
+ * @returns {Map<string, string[]>} preset id → serverName 列表
+ */
+function scanPresetServers(bundledPatch = BUNDLED_PATCH_PATH) {
+	const out = new Map();
+	const files = [];
+	/* ① profile patch(profile 级 preset 声明) */
+	const profilePatch = join(profileDir(), "cordis.patch.yml");
+	if (existsSync(profilePatch)) files.push(profilePatch);
+	/* ② 包内 patch(dtg 自带的 cordis-sub / sci-lite / dtg-shell / cordis-router) */
+	if (bundledPatch && existsSync(bundledPatch)) files.push(bundledPatch);
+	for (const f of files) {
+		try {
+			const src = readFileSync(f, "utf8");
+			/* 行扫描(不引 yaml 依赖): preset 块起点 = "- id: preset-xxx",
+			 * 块内 "serverName: X" 归属该 preset。 */
+			const lines = src.split("\n");
+			let cur = null;
+			for (const line of lines) {
+				const pm = /^\s*- id: (preset-[A-Za-z0-9_-]+)\s*$/.exec(line);
+				if (pm) { cur = pm[1].replace(/^preset-/, ""); continue; }
+				/* 非 preset 块的顶层 insert(- id: xxx, 缩进为 0)⇒ 结束当前 preset 块 */
+				if (cur && /^- id: /.test(line)) cur = null;
+				if (!cur) continue;
+				const sm = /serverName:\s*'?([A-Za-z0-9_-]+)'?\s*$/.exec(line);
+				if (!sm) continue;
+				if (!out.has(cur)) out.set(cur, []);
+				if (!out.get(cur).includes(sm[1])) out.get(cur).push(sm[1]);
+			}
+		} catch (e) {
+			warn(`preset server 扫描失败(${f}): ${String((e && e.message) || e).slice(0, 120)}`);
+		}
+	}
+	return out;
+}
+
+/* [v0.15 §3.2] 按 MCP server 自动成组(取代 client.js 硬编码 7 组 40 件)。
+ * 规则: mcp__<server>__<tool> ⇒ 按 server 成组; dsh_* ⇒ 第三方插件组;
+ *       moa_* ⇒ MoA 组; 其余 ⇒ 宿主原生组。
+ * ⇒ 新装 MCP server 的工具**自动有组可归**, 不必改代码。
+ * @param {string[]} names 工具名列表
+ * @returns {Array<{key:string,title:string,names:string[],note:string}>}
+ */
+function autoGroups(names) {
+	const buckets = new Map();
+	const push = (key, title, note, n) => {
+		if (!buckets.has(key)) buckets.set(key, { key, title, note, names: [] });
+		buckets.get(key).names.push(n);
+	};
+	for (const n of names || []) {
+		const m = /^mcp__([^_]+(?:_[^_]+)*?)__/.exec(n);
+		if (m) { push(`mcp:${m[1]}`, `🔌 MCP ${m[1]}`, `按 MCP server 自动归组`, n); continue; }
+		if (n.startsWith("moa_")) { push("moa", "🔬 多模型协作", "moa_ 前缀", n); continue; }
+		if (n.startsWith("dsh_")) { push("dsh", "🧩 第三方插件", "dsh_ 前缀", n); continue; }
+		push("native", "⚙️ 宿主原生", "其余工具", n);
+	}
+	return [...buckets.values()].map((g) => ({ ...g, names: g.names.sort() }));
+}
+
+/* [v0.15 §0] 全局层工具名集(来源感知 pending 的判据)。
+ * 全局视角 = view(undefined)(dsh-tools:477-508: inherited 从 layers.global.tools 起算,
+ * 无 scope ⇒ 层链为空 ⇒ 只剩全局层)。不造临时 scope ⇒ 降级态也可用。
+ * 返回 null 表示取不到(TOOLS 未就绪)⇒ 调用方须走退回路径并告警。 */
+function globalToolNames() {
+	if (!TOOLS) return null;
+	try {
+		const v = TOOLS.view(undefined);
+		const s = v?.knownNames || v?.restrictableNames;
+		return s ? new Set(s) : null;
+	} catch (e) {
+		warn("globalToolNames 失败: " + String((e && e.message) || e));
+		return null;
+	}
+}
+
+/* 把运行时观测合并进 lock: 新名→pending; forced 名补标。返回是否变化(变化才写盘)。
+ *
+ * [v0.15 P0 修·来源感知 pending] 参数语义变更:
+ *   - knownSet      : 本会话的**可裁集**(全局层 + preset 层), 用于记账与 forced 判定
+ *   - globalNames   : **全局层**工具名集合(view(undefined).knownNames)。
+ *                     只有全局层的新名才建 pending(= 自动闸门只拦全局层新增);
+ *                     preset 层新名建 state:"preset"(只记账, 不进 deny 集)。
+ *   - globalNames 缺失(降级/取不到)⇒ 退回旧行为(全部新名→pending)并告警。
+ *
+ * ★ 为什么必须分两路(而不是只按 knownSet):
+ *   域 preset 自带工具(illustrator/word/excel/ppt)本来就不该被自动闸门管,
+ *   但它们**必须继续被记账**(面板要能看见「这个 preset 带了哪些工具」)。
+ *   ⇒ 记账用全集, 执法用全局层。
+ */
+function syncLock(lock, knownSet, cfg, globalNames = null, lockPath = null) {
 	const autoDenyNew = cfg?.autoDenyNew !== false && lock.autoDenyNew !== false;
 	let changed = false;
 	const now = new Date().toISOString();
+	/* 全局层判据: null ⇒ 取不到(降级), 退回旧行为并告警 */
+	const isGlobal = globalNames ? (n) => globalNames.has(n) : (n) => { return true; };
+	if (globalNames === null) {
+		warn("syncLock: 全局层名集不可用 ⇒ 自动闸门退回「全部新名即 pending」(域 preset 工具可能被误杀, 降级态才应出现)");
+	}
 	for (const n of knownSet) {
-		if (!lock.tools[n]) { lock.tools[n] = { state: "pending", firstSeen: now }; changed = true; }
+		if (lock.tools[n]) continue;
+		/* [v0.15 P0] 全局层新名 → pending(自动闸门拦); preset 层新名 → preset(只记账) */
+		lock.tools[n] = isGlobal(n)
+			? { state: "pending", firstSeen: now }
+			: { state: "preset", firstSeen: now };
+		changed = true;
+	}
+	/* [v0.15 P0] **存量 pending 重判**(关键: 改入参不会让已存在的 pending 消失)。
+	 * 生产 lock 有 280 个 pending, 其中 278 件是域 preset 自带工具 —— 它们是
+	 * 旧实现(把可裁集当全局集)误建的。若不重判, P0 上线后这些件仍会被裁,
+	 * 故障 A 照旧 ⇒ 「改了入参就修好了」是错的。
+	 *
+	 * 重判规则(仅降级方向, 不反向):
+	 *   pending 且 **不属于全局层** ⇒ state 改为 "preset"(只记账, 不进 deny 集)
+	 *   ⇒ 域工具立即恢复可见; 记账与面板可见性不丢(不删条目, 保留来源历史)。
+	 *
+	 * ★ 不反向(preset → pending): 已经判为全局层的件不该因为本次视图变化被拉黑;
+	 *   反向会把「用户显式裁决过的全局件」误降级。
+	 * ★ 只动 pending, 不动 seen/forced: seen=已裁决(权威在 config), forced=preset 注册不可达。
+	 */
+	if (globalNames) {
+		for (const [n, r] of Object.entries(lock.tools)) {
+			if (r?.state === "pending" && !globalNames.has(n)) {
+				r.state = "preset";
+				r.reclassifiedAt = now;
+				r.reclassifiedFrom = "pending";
+				changed = true;
+			}
+		}
 	}
 	/* 首次建档: 继承现状——lock 不改变建档前已有的子代理可见面, known 全员标 seen
 	 * (baseline 内=已裁决禁, 其余=存量放行); pending 只对"建档后的新增"生效
-	 * ——闸门语义=拦新不拦旧(只特判 baseline 会把其余存量工具误拦)。 */
+	 * ——闸门语义=拦新不拦旧(只特判 baseline 会把其余存量工具误拦)。
+	 *
+	 * [v0.15 P0 不变量] 本块只处理 state==="pending"; 而 pending 态**只可能出现在
+	 *   全局层新名上**(preset 层新名直接建 "preset" 态, 见上)⇒ 首次建档时
+	 *   域 preset 工具**保持 preset 态**, 不会被打成 "seen"(丢来源标记)。
+	 *   ★ 这一点是必需的: 重判块只处理 pending ⇒ 一旦被打成 seen 就再也拿不回
+	 *   来源标记, 面板与台账将永久失明于「这件是哪个 preset 自带的」。 */
 	if (changed && !lock.anchorPending && Object.keys(lock.tools).length <= knownSet.size) {
 		for (const n of knownSet) {
 			if (lock.tools[n] && lock.tools[n].state === "pending") { lock.tools[n].state = "seen"; lock.tools[n].ruledAt = now; }
 		}
 	}
 	lock.autoDenyNew = autoDenyNew;
-	if (changed) writeLock(lock);
+	if (changed) writeLock(lock, lockPath);
 	return changed;
 }
 
-/* pending 件名单(autoDenyNew 时并入裁剪; preset_allow 豁免照常作用) */
+/* pending 件名单(autoDenyNew 时并入裁剪; preset_allow 豁免照常作用)
+ *
+ * [v0.15 P0 修·来源感知] 自动发现闸门**只管全局层新增**。
+ *
+ * ★ 根因(2026-11-13 23:35 北京 实测坐实):
+ *   preset 行注册的工具落在 **preset 层 = agent 的父层**(非 own 层)
+ *   ⇒ 工具名进 view(agent).restrictableNames(dsh-tools:489-491)
+ *   ⇒ 旧实现把「本会话可裁集」当「全局新增集」⇒ 域 preset 自己的工具
+ *     (illustrator 67 / illustrator-vec 29 / word 120 / excel 59 / ppt 3)
+ *     全部落进 pending ⇒ 被自己的闸门整批裁掉。
+ *   实测: preset_dispatch(illus-deep) 会话仅 60 件工具, 96 件绘图工具全灭,
+ *   而该 preset 的岗位引导明确承诺「67 绘图工具」——
+ *   台账 preset=illus-deep/denied=154/pendingDenied 含全部 96 件/visibleAfter=60。
+ *   生产 lock 409 件量化: pending 280 / ∩baseline_deny=0 / 其中域工具 278 / G∩P=0。
+ *
+ * ★ 修法: pending 作用域收窄为**全局层**(view(undefined).knownNames)。
+ *   域 preset 自带工具不进 pending ⇒ 不被自动闸门误杀;
+ *   新装全局 MCP 工具仍被自动拦(原意保留);
+ *   preset 层新名改标 state:"preset"(只记账 + 面板可见, 不进 deny 集)
+ *   ⇒ 避免「P0 单独上线 ⇒ 审计盲区」这一 fail-open 摆钟(见 docs/preset-policy.md §3.4)。
+ *
+ * ★ 静态兜底: 若全局层取不到(peer 未就绪/降级), 退回旧的「全部可裁集」行为,
+ *   但**明确告警**(降级时治理本就停用, 此路径实际不会走到)。
+ */
 function pendingDeny(lock, cfg) {
 	if (cfg?.autoDenyNew === false || lock.autoDenyNew === false) return [];
 	return Object.entries(lock.tools).filter(([, r]) => r && r.state === "pending").map(([n]) => n);
 }
 
-function effectiveDeny(cfg, preset, lock) {
+/* 子代侧 deny 集合成 —— 存量语义**逐字保真** + preset_rules 增量。
+ *
+ * 合成公式(docs/preset-policy.md §3.3):
+ *   deny = (baseline_deny ∪ pending ∪ preset_extra_deny[p])
+ *            ∖ preset_allow[p]          ← 存量: 子代侧豁免(语义不变)
+ *            ∪ preset_extra_deny[p]      ← 存量: 无条件叠加(豁免权无效, 位置不变)
+ *            ∪ preset_rules[p].deny      ← 新增: 显式禁用(无豁免, 最强者胜)
+ *
+ * ★ exempt 档1("auto")的作用范围 = **只影响 pending 通道**:
+ *   该 preset 不被「自动发现闸门」拦; baseline_deny / preset_extra_deny /
+ *   显式 deny **照常生效**。⇒ 全局闸门不会被单个 preset 关掉(闸门是全局的,
+ *   豁免是 per-preset 的)。
+ *
+ * @param {object} cfg   生效配置
+ * @param {string} preset preset id
+ * @param {object} lock  lock 台账(可空)
+ * @param {object} rules resolvePresetRules() 的结果(可省 ⇒ 无 preset_rules 增量)
+ */
+function effectiveDeny(cfg, preset, lock, rules = null) {
 	const base = Array.isArray(cfg?.baseline_deny) ? cfg.baseline_deny : DEFAULT_BASELINE;
 	const exempt = new Set((cfg?.preset_allow && cfg.preset_allow[preset]) || []);
 	const extra = (cfg?.preset_extra_deny && cfg.preset_extra_deny[preset]) || [];
-	const pending = lock ? pendingDeny(lock, cfg) : [];
-	return [...new Set([...base, ...pending].filter((n) => !exempt.has(n)).concat(extra))];
+	/* pending 通道: exempt 档1 ⇒ 该 preset 不被自动闸门拦 */
+	const pending = lock ? pendingDenyFor(lock, cfg, preset, rules) : [];
+	/* 存量语义逐字保真: (base ∪ pending) − exempt, 然后无条件并入 extra */
+	const legacy = [...new Set([...base, ...pending].filter((n) => !exempt.has(n)).concat(extra))];
+	/* 新增通道: 显式 deny(无豁免, 最强者胜 ⇒ 最后并入) */
+	const explicit = Array.isArray(rules?.deny) ? rules.deny : [];
+	return [...new Set([...legacy, ...explicit])];
 }
 
 /* [v0.14.0 P2] 台账归档轮转: 当前档超阈值 ⇒ 轮转为 archive/audit-<ts>.jsonl。
@@ -538,6 +993,34 @@ function readRecentAudit(limit, auditPath = AUDIT_PATH, archiveDir = AUDIT_ARCHI
 	return out;
 }
 
+/* [v0.15 §10] 主会话正面清单取值链 —— 抽为**纯函数**以便探针**真调**
+ * (照 rotateAuditIfNeeded 的参数注入范式; 字符串抽取 eval 会因片段截断在
+ *  语句中间而脆断, 且变异锚点易撞子串 ⇒ 假绿/假红都可能出现)。
+ *
+ * ★ 双语义拆键(裁决③, 2026-11-14)的语义核心, 三条判据都落在这里:
+ *   I9  拆分前后正面清单逐件一致 ⇒ 回落读与显式 main_preset_allow 同义
+ *   I10 未拆分的 preset 仍回落且**必发告警**(不静默)
+ *   I11 子代侧 preset_allow 语义不变(在 effectiveDeny 里, 不在此函数)
+ *
+ * @param {object} cfg   生效配置
+ * @param {string} preset 该会话的 preset id(空串=无 preset)
+ * @returns {{allowCfg: string[]|null, allowFallback: boolean, source: string}}
+ *   allowCfg      = 正面清单(已去重); null=不启用正面清单制
+ *   allowFallback = true ⇒ 该值来自共用键 preset_allow(回落, 双语义未拆)
+ *   source        = "main_preset_allow" | "preset_allow(fallback)" | "none"
+ */
+function resolveMainAllow(cfg, preset) {
+	/* 合法性回落(pick-first-valid)取代 ?? nullish 回落: main 键存在但非数组时回落共用键,
+	 * 杜绝「非法值遮蔽合法共用键→静默 fail-open」; [] 仍=显式空正面清单(不回落) */
+	const pickArr = (...cands) => { for (const c of cands) if (Array.isArray(c)) return c; return null; };
+	const mAllow = cfg?.main_preset_allow?.[preset];
+	const allowSrc = preset ? pickArr(mAllow, cfg?.preset_allow?.[preset]) : null;
+	const allowCfg = allowSrc ? [...new Set(allowSrc)] : null;
+	const allowFallback = !!(allowCfg && !Array.isArray(mAllow));
+	const source = Array.isArray(mAllow) ? "main_preset_allow" : (allowCfg ? "preset_allow(fallback)" : "none");
+	return { allowCfg, allowFallback, source };
+}
+
 /* ── v0.4 主会话裁剪: depth0 专用(只裁显式 main_deny + main_preset_extra_deny 名单,
  *     不进 lock/pending; v0.14.3 起 PROTECTED_MAIN 仅警示不剔除; 求交预过滤同子代理款,
  *     未知名静默记 missing 不炸) ── */
@@ -554,22 +1037,52 @@ function gateMain(agent) {
 		const preset = agent?.session?.header?.agentPreset || "";
 		/* [v0.11] 主会话按角色独立键: main_preset_* 优先; 未配置回落 v0.7 共用键(手开场景现行为不变);
 		 * 共用键今后语义=子代侧(Tab👥), main_preset_*=主会话侧(Tab🧭)——两场景可分别配置 */
-		const mAllow = cfg?.main_preset_allow?.[preset], mExtra = cfg?.main_preset_extra_deny?.[preset];
+		const mExtra = cfg?.main_preset_extra_deny?.[preset];
 		/* 合法性回落(pick-first-valid)取代 ?? nullish 回落: main 键存在但非数组时回落共用键,
 		 * 杜绝「非法值遮蔽合法共用键→静默 fail-open」; [] 仍=显式空正面清单(不回落) */
 		const pickArr = (...cands) => { for (const c of cands) if (Array.isArray(c)) return c; return null; };
-		const allowSrc = preset ? pickArr(mAllow, cfg?.preset_allow?.[preset]) : null;
-		const allowCfg = allowSrc ? [...new Set(allowSrc)] : null;
-		/* 回落可见化: 主会话侧未配 main_preset_allow 时回落共用键 preset_allow[preset],
-		 * 且该键在主会话侧是 keep-only 语义(main_deny 不再叠加) —— 与子代理侧的
-		 * "豁免"语义相反。不告警会被误读成"没配就没裁", 故显式提示。 */
-		if (allowCfg && !Array.isArray(mAllow)) {
-			warn(`主会话 preset "${preset}" 未配 main_preset_allow, 回落共用键 preset_allow[${preset}] → 该键在主会话侧按 keep-only 生效(main_deny 不叠加)`);
+		/* [v0.15 §10] 正面清单取值链 = 纯函数 resolveMainAllow(可被探针真调;
+		 * gateMain 不再自带一份取值逻辑 ⇒ 探针与生产**永不分叉**)。 */
+		const { allowCfg, allowFallback } = resolveMainAllow(cfg, preset);
+		/* [v0.15 §10 修·拆键] 回落可见化: 主会话侧未配 main_preset_allow 时回落共用键
+		 * preset_allow[preset], 且该键在主会话侧是 keep-only 语义(main_deny 不叠加)
+		 * —— 与子代理侧的"豁免"语义相反。
+		 *
+		 * ★ v0.15 变更(裁决③): 回落**行为不变**(行为逐字保真 ⇒ 零缩面),
+		 *   但从「仅 warn 提示」升级为「**显式回落标记 + 台账事件 + 面板可见**」:
+		 *   一张表两种强度是本插件的结构性缺陷, 回落读必须**可见可查**,
+		 *   否则用户永远不知道自己配的 preset_allow 在主会话侧其实是正面清单。
+		 *   台账记 allow-fallback 事件(列名+preset+件数)⇒ 面板可对账。
+		 *   拆分动作(把 preset_allow[p] 复制成 main_preset_allow[p])由面板提供,
+		 *   拆完后不再回落、不再告警 —— 见 gateSvc.splitAllow()。 */
+		if (allowFallback) {
+			warn(`主会话 preset "${preset}" 未配 main_preset_allow, 回落共用键 preset_allow[${preset}] → 该键在主会话侧按 keep-only 生效(main_deny 不叠加)【v0.15: 建议在面板执行「拆分」以消除双语义】`);
+			try { audit({ ts: new Date().toISOString(), agentId: agent?.id, depth: 0, ev: "allow-fallback", scope: "main", preset, count: allowCfg.length }); } catch { /* noop */ }
 		}
 		const extraDeny = preset ? (pickArr(mExtra, cfg?.preset_extra_deny?.[preset]) || []) : [];
+		/* [v0.15 §3.3] preset_rules(主会话侧) —— fail-loud 同子代侧。
+		 * ★ exempt("auto") 在主会话侧**不适用**: gateMain 根本不查 lock/pending
+		 *   (主会话无自动发现闸门)⇒ exempt 只对子代侧有意义, 配了也不改变主会话行为。
+		 *   为免"配了像没配"的错觉, 这里显式提示一次。
+		 * ★ allow(严格面)若已配 ⇒ 该 preset 的正面清单由它决定(显式 opt-in 严格模式);
+		 *   未配 ⇒ 沿用存量 main_preset_allow / preset_allow(回落)。
+		 */
+		const mainRules = resolvePresetRules(cfg, preset);
+		if (!mainRules.ok) {
+			warn(`preset_rules["${preset}"] 配置非法 —— 该 preset 的 preset_rules **整体不生效**(不部分接受): ${mainRules.errors.join("; ")}`);
+			try { audit({ ts: new Date().toISOString(), agentId: agent?.id, depth: 0, ev: "preset-rules-invalid", scope: "main", preset, errors: mainRules.errors.slice(0, 5) }); } catch { /* noop */ }
+		}
+		const mainRulesEff = mainRules.ok ? mainRules : null;
+		if (mainRulesEff?.exempt?.length) {
+			warn(`preset_rules["${preset}"].exempt 在主会话侧不适用(主会话无自动发现闸门)⇒ 已忽略该项(子代侧仍生效)`);
+		}
+		const strictAllow = Array.isArray(mainRulesEff?.allow) ? mainRulesEff.allow : null;
+		const explicitDeny = Array.isArray(mainRulesEff?.deny) ? mainRulesEff.deny : [];
 		/* 语义: 只认 config 显式名单(无 config/无字段=不裁; DEFAULT_MAIN_DENY 仅蓝本) */
-		const deny = [...new Set([...(Array.isArray(cfg?.main_deny) ? cfg.main_deny : []), ...extraDeny])];
-		if (!allowCfg && !deny.length) return { skipped: "depth0(无 main_deny/无 preset 键)" };
+		const deny = [...new Set([...(Array.isArray(cfg?.main_deny) ? cfg.main_deny : []), ...extraDeny, ...explicitDeny])];
+		/* 正面清单来源优先级: 显式严格面(preset_rules.allow) > 存量 main_preset_allow/回落 */
+		const effectiveAllow = strictAllow !== null ? strictAllow : allowCfg;
+		if (!effectiveAllow && !deny.length) return { skipped: "depth0(无 main_deny/无 preset 键)" };
 		const parentCtx = agent?.ctx;
 		if (!parentCtx || typeof parentCtx.extend !== "function") {
 			warn(`main.ctx 缺失 —— 跳过 ${agent?.id}`);
@@ -586,11 +1099,30 @@ function gateMain(agent) {
 		/* v0.4.6: view 参数=scope key(agent 对象); 传 sctx 是错参(恒读纯全局层) */
 		const known = tools.view(agent).restrictableNames;
 		let mode = "deny", applicable = [], missing = [], blocked = [];
-		if (allowCfg) {
+		if (effectiveAllow) {
 			mode = "allow";
-			applicable = allowCfg.filter((n) => known.has(n));
-			missing = allowCfg.filter((n) => !known.has(n));
-			if (applicable.length > 0) tools.restrict({ allow: applicable });
+			/* ★ [v0.15 §3.3] keep-only 与显式 deny 的叠加语义:
+			 *   keep-only(正面清单)=「只留清单内的件」; 显式 deny = 「再把这几件也去掉」。
+			 *   ⇒ 最终面 = 正面清单 ∖ 显式 deny。
+			 *   ★ 两通道**不合并成一张表**: 正面清单决定"保留谁", deny 决定"再去掉谁",
+			 *     两者在不同层表达不同意图(用户明确要求的能力 vs 明确不要的能力)。
+			 *   实现: 先按 allow 收窄, 再对 allow∩deny 的件**单独**用 deny 通道裁 ——
+			 *     但 restrict() 的 allow/deny 在同一次调用里是**并集语义**
+			 *     (dsh-tools:392-394: allow 未命中 ⇒ 不准入; deny 命中 ⇒ 不准入)
+			 *     ⇒ 一次调用同时给 allow 与 deny 即可实现 ∖。
+			 *   ⚠ 但 deny 里若含**不在 allow 内**的件, 它们已被 allow 裁掉 ⇒ 无影响。
+			 */
+			applicable = effectiveAllow.filter((n) => known.has(n));
+			missing = effectiveAllow.filter((n) => !known.has(n));
+			const denyHit = applicable.filter((n) => explicitDeny.includes(n));
+			blocked = denyHit.filter((n) => PROTECTED_MAIN.has(n));
+			if (blocked.length) warn(`preset_rules.deny 含主会话核心能力(已照裁, 提醒): ${blocked.join(",")}`);
+			if (applicable.length > 0) {
+				/* 显式 deny 与正面清单求交(∖); 不在 allow 内的 deny 件无需再传(已被裁) */
+				const effectiveDenyList = explicitDeny.filter((n) => applicable.includes(n));
+				if (effectiveDenyList.length > 0) tools.restrict({ allow: applicable, deny: effectiveDenyList });
+				else tools.restrict({ allow: applicable });
+			}
 		} else {
 			/* [v0.14.3 修·用户裁定] 保护集从**硬剔除**改为**警示但不阻断**。
 			 * 旧形态: main_deny / main_preset_extra_deny 里的保护件被**直接剔除**
@@ -613,9 +1145,16 @@ function gateMain(agent) {
 		}
 		const visibleAfter = tools.view(agent).visible.size;
 		SCOPES.set(agent.id, scoped);
-		const rec = { ts: new Date().toISOString(), agentId: agent.id, depth: 0, preset: preset || "(main)", mode, denied: mode === "allow" ? allowCfg.length : applicable.length, allowed: mode === "allow" ? applicable.length : undefined, pendingDenied: [], missing, visibleAfter, ...(blocked.length ? { blockedProtected: blocked } : {}) };
+		const rec = { ts: new Date().toISOString(), agentId: agent.id, depth: 0, preset: preset || "(main)", mode, denied: mode === "allow" ? effectiveAllow.length : applicable.length, allowed: mode === "allow" ? applicable.length : undefined, pendingDenied: [], missing, visibleAfter, ...(blocked.length ? { blockedProtected: blocked } : {}) };
+		/* [v0.15 §10] 回落标记入台账 ⇒ 面板可对账「哪些 preset 还在用双语义回落」 */
+		if (allowFallback) rec.allowFallback = true;
+		/* [v0.15 §3.3] preset_rules 生效痕迹 */
+		if (mainRulesEff) {
+			if (explicitDeny.length) rec.rulesDeny = explicitDeny.length;
+			if (strictAllow !== null) rec.rulesStrictAllow = strictAllow.length;
+		}
 		audit(rec);
-		log(`主会话裁剪: ${agent.id.slice(0, 24)} preset=${preset || "(main)"} mode=${mode} ${mode === "allow" ? `allow=${applicable.length}/${allowCfg.length}` : `deny=${applicable.length}`}${missing.length ? ` 缺名=${missing.length}` : ""}${blocked.length ? ` 核心能力照裁=${blocked.length}` : ""} 面=${rec.visibleAfter}`);
+		log(`主会话裁剪: ${agent.id.slice(0, 24)} preset=${preset || "(main)"} mode=${mode} ${mode === "allow" ? `allow=${applicable.length}/${effectiveAllow.length}` : `deny=${applicable.length}`}${missing.length ? ` 缺名=${missing.length}` : ""}${blocked.length ? ` 核心能力照裁=${blocked.length}` : ""}${allowFallback ? " [allow回落]" : ""}${strictAllow !== null ? " [严格面]" : ""} 面=${rec.visibleAfter}`);
 		return rec;
 	} catch (e) {
 		/* fail-open: 主会话裁剪失败绝不阻断启动; [v0.8.4 P1] 补台账让失败可对账 */
@@ -965,6 +1504,10 @@ function gateAgent(agent) {
 			return { skipped: "no-tools-service" };
 		}
 		const known = tools.view(agent).restrictableNames; /* key=agent 对象 */
+		/* [v0.15 P0] 全局层名集(来源感知 pending 的判据)。
+		 * 全局视角就是 view(undefined)(见 snapshotNames 注释: 不造 scope ⇒ 降级态也可用)。
+		 * view(undefined) 的 knownNames 与 restrictableNames 同集(继承层只有全局层)。 */
+		const globalNames = globalToolNames();
 		/* preset_deny: preset 访问控制——名单内 preset 不允许作为子代被派单调用
 		 * (不论通道)。实现=创建时 restrict 到最小回报面; 台账记 preset-denied;
 		 * 不 throw(agent/created 为串行事件, 监听不可炸)。depth0 主会话/手开会话不受限。
@@ -973,7 +1516,26 @@ function gateAgent(agent) {
 		 * 台账带 degraded 标志。 */
 		SCOPES.set(agent.id, scoped);
 		const lock = readLock();
-		const newSeen = syncLock(lock, known, cfg);
+		/* [v0.15 P0] 来源感知: syncLock 内含「分类新名」+「重判存量 pending」两件事。
+		 * 必须在 effectiveDeny 之前完成 —— 否则域 preset 自己的工具仍会被裁。 */
+		const newSeen = syncLock(lock, known, cfg, globalNames);
+		/* [v0.15 §3.2] 归属表增量采集(每次 agent 创建时补全一次)。
+		 * 归属 = 该 agent 看得到、但不在全局层的工具名 ⇒ 必来自其 preset 层。
+		 * ★ 用 composedPreset(ctx) 判定有效 preset(composeFrom 继承分支也正确);
+		 *   采集失败不阻断裁剪(归属表只是缓存, 不参与执法)。
+		 * ★ 只在子代路径采集(depth>0): 主会话路径的 agent 也在 agents.list() 里,
+		 *   但主会话的 preset 归属同样需要 —— 故两处都采集(此处 + gateMain)。 */
+		try {
+			const presetSvc = sctx.get?.("agentPresets") || ROOT_CTX?.get?.("agentPresets");
+			let pid = "";
+			try { pid = presetSvc?.composedPreset?.(parentCtx) || ""; } catch { /* keep */ }
+			if (!pid) pid = header?.agentPreset || "";
+			if (pid && globalNames) {
+				const own = new Set();
+				for (const n of known) if (!globalNames.has(n)) own.add(n);
+				if (own.size) mergeOrigin(new Map([[pid, own]]));
+			}
+		} catch { /* 归属采集失败不阻断裁剪 */ }
 		const childPreset = header?.agentPreset || "";
 		if (childPreset && Array.isArray(cfg?.preset_deny) && cfg.preset_deny.includes(childPreset)) {
 			let applied = false, degraded = false;
@@ -993,8 +1555,19 @@ function gateAgent(agent) {
 			audit({ ts: new Date().toISOString(), agentId: agent?.id, depth, ev: "preset-denied", preset: childPreset, degraded, restrictApplied: !degraded });
 			return { denied: "preset_deny", degraded };
 		}
+		/* [v0.15 §3.3] preset_rules 解析(子代侧) —— ★ fail-loud: 非法值不静默通过。
+		 * 校验失败 ⇒ 该 preset 的规则**整体不生效**(不做"部分接受": 部分接受会让
+		 * 用户以为配上了其实没配上), 并 warn + 台账, 面板可对账。
+		 * 存量行为不受影响(未配 preset_rules 时 rules 为空 ⇒ 合成结果与 v0.14.5 逐件一致)。 */
+		const childPresetName = header?.agentPreset || "";
+		const rules = resolvePresetRules(cfg, childPresetName);
+		if (!rules.ok) {
+			warn(`preset_rules["${childPresetName}"] 配置非法 —— 该 preset 的 preset_rules **整体不生效**(不部分接受): ${rules.errors.join("; ")}`);
+			try { audit({ ts: new Date().toISOString(), agentId: agent?.id, depth, ev: "preset-rules-invalid", preset: childPresetName, errors: rules.errors.slice(0, 5) }); } catch { /* noop */ }
+		}
+		const rulesEff = rules.ok ? rules : null;   /* 非法 ⇒ 退化为「无 preset_rules 增量」 */
 		/* wanted∩missing 中的 forced 名 → lock 标 forced(探针记录) */
-		const wanted0 = effectiveDeny(cfg, header?.agentPreset || "", lock);
+		const wanted0 = effectiveDeny(cfg, childPresetName, lock, rulesEff);
 		const missing0 = wanted0.filter((n) => !known.has(n));
 		let forcedChanged = false;
 		for (const n of missing0) {
@@ -1002,7 +1575,7 @@ function gateAgent(agent) {
 		}
 		if (forcedChanged) writeLock(lock);
 		/* 最终名单: pending 并入后与运行时求交(未知名已被交集预过滤, 0.2.2 throw 不触发) */
-		const wanted = effectiveDeny(cfg, header?.agentPreset || "", lock);
+		const wanted = effectiveDeny(cfg, childPresetName, lock, rulesEff);
 		const applicable = wanted.filter((n) => known.has(n));
 		const missing = wanted.filter((n) => !known.has(n));
 		const pendingDenied = applicable.filter((n) => lock.tools[n]?.state === "pending");
@@ -1057,6 +1630,11 @@ function gateAgent(agent) {
 		};
 		if (supRec.count) { rec.supplemented = supRec.count; rec.supplementedNames = supRec.names; }
 		if (newSeen) rec.lockNewNames = Object.entries(lock.tools).filter(([, r]) => r?.state === "pending").map(([n]) => n).length;
+		/* [v0.15 §3.3] preset_rules 生效痕迹入台账 ⇒ 面板可对账「这个 preset 用了哪条通道」 */
+		if (rulesEff) {
+			if (rulesEff.deny?.length) rec.rulesDeny = rulesEff.deny.length;
+			if (rulesEff.exempt?.length) rec.rulesExempt = rulesEff.exempt;
+		}
 		audit(rec);
 		log(`子代理裁剪: ${agent.id.slice(0, 24)} depth=${depth} preset=${rec.preset || "-"} deny=${applicable.length}(pending ${pendingDenied.length}) 面=${rec.visibleAfter}${missing.length ? ` 缺名=${missing.length}` : ""}${newSeen ? " [lock+new]" : ""}${supRec.count ? ` 补挂=${supRec.count}(${supRec.names.slice(0, 5).join(",")}${supRec.names.length > 5 ? "…" : ""})` : ""}`);
 		return rec;
@@ -1094,6 +1672,22 @@ function snapshotNames() {
 const gateSvc = {
 	status() {
 		const cfg = readConfig();
+		/* [v0.15 §10] 双语义回落清单直接进 status() ⇒ 面板一眼可见。
+		 * 判定: 配了 preset_allow[p] 但未配 main_preset_allow[p] ⇒ 主会话侧
+		 * 仍在回落共用键(该键主会话侧=keep-only 正面清单, 子代侧=baseline 豁免集)。 */
+		const allowFallbacks = (() => {
+			try {
+				const pa = cfg?.preset_allow && typeof cfg.preset_allow === "object" ? cfg.preset_allow : {};
+				const ma = cfg?.main_preset_allow && typeof cfg.main_preset_allow === "object" ? cfg.main_preset_allow : {};
+				const rows = [];
+				for (const [p, list] of Object.entries(pa)) {
+					if (!Array.isArray(list)) continue;
+					if (Array.isArray(ma[p])) continue;
+					rows.push({ preset: p, count: list.length });
+				}
+				return rows;
+			} catch { return []; }
+		})();
 		return {
 			ok: true, enabled: cfg?.enabled !== false, config_path: CFG_PATH(),
 			config: cfg || { baseline_deny: DEFAULT_BASELINE },
@@ -1102,6 +1696,9 @@ const gateSvc = {
 			audit_path: AUDIT_PATH, lock_path: LOCK_PATH(),
 				/* [v0.11] 单一权威源下发: 版本与保护集以 host 为准, 客户端镜像仅回退 */
 				version: PKG_VERSION, protected_main: [...PROTECTED_MAIN],
+				/* [v0.15 §10] 双语义回落清单(preset_allow 未拆分的那些) */
+				allow_fallbacks: allowFallbacks,
+				allow_fallback_count: allowFallbacks.length,
 				/* [v0.14.0 P0] 降级可见性: peer 未就绪 ⇒ 治理停用, 面板必须显示出来。
 				 * (静默不裁剪 = fail-open 假装正常, 比崩更危险) */
 				degraded: !peersReady(),
@@ -1139,7 +1736,31 @@ const gateSvc = {
 							.map(([k, v]) => [String(k).trim(), v.map(String).filter(Boolean)])) }
 						: {})
 					: (curCfg.capabilities && typeof curCfg.capabilities === "object" ? { capabilities: curCfg.capabilities } : {})),
+				/* [v0.15 P1a] preset_rules 透传(每 preset 一份专属配置)。
+				 * ★ ★ 白名单式重建会**静默丢弃**面板不认识的键 —— 面板提交 {...draft}
+				 *   会带上 preset_rules, 但若此处不显式透传, 用户在面板配的规则会
+				 *   **保存成功却完全不生效**(静默丢失, 本插件最批判的失败族)。
+				 *   ⇒ 显式透传 + **落盘前逐 preset 校验**(与运行期 resolvePresetRules 同口径):
+				 *   非法项(含未实现的 exempt 取值)⇒ **拒绝整次保存并报错**,
+				 *   绝不「接受后当没看见」(§3.6 硬约束)。
+				 *   payload 未给 preset_rules ⇒ 保留现值(与 main_deny 同模式)。 */
+				...(payload && typeof payload === "object" && "preset_rules" in payload
+					? (normalizePresetRules(payload.preset_rules).ok
+						? { preset_rules: normalizePresetRules(payload.preset_rules).value }
+						: {})
+					: (curCfg.preset_rules && typeof curCfg.preset_rules === "object" ? { preset_rules: curCfg.preset_rules } : {})),
 			};
+			/* [v0.15 P1a] preset_rules 校验失败 ⇒ **拒绝保存**(不落盘半份配置)。
+			 * ★ 放在写盘之前: 否则非法配置会落盘, 而运行期又 fail-loud 忽略它
+			 *   ⇒ 用户看到"保存成功"但规则不生效(静默失败)。 */
+			if (payload && typeof payload === "object" && "preset_rules" in payload) {
+				const nr = normalizePresetRules(payload.preset_rules);
+				if (!nr.ok) {
+					const msg = `preset_rules 配置非法, 已拒绝保存(未落盘): ${nr.errors.join("; ")}`;
+					try { audit({ ts: new Date().toISOString(), ev: "preset-rules-invalid-save", errors: nr.errors.slice(0, 5) }); } catch { /* noop */ }
+					return { ok: false, error: msg };
+				}
+			}
 			mkdirSync(profileDir(), { recursive: true });
 			atomicWrite(CFG_PATH(), JSON.stringify({ _note: "子代理工具面负面清单(dsh-depth-tool-gate)。baseline=depth>0 全裁; preset_allow=按 preset 豁免; preset_extra_deny=按 preset 加裁; main_deny=depth0 主会话显式裁(核心能力照裁, 只提示); autoDenyNew=lock 新见工具默认拦截; capabilities=能力标签表(dispatch_composed 动态面, 存在则整体覆盖内置, 删键恢复内置)。保存即生效(仅之后创建的 agent)。", ...next }, null, 1));
 			/* 裁决权威=config: 保存后把 baseline 全员在 lock 建/标 seen(消 pending,
@@ -1169,7 +1790,43 @@ const gateSvc = {
 			const stale = [...base, ...extraAll].filter((n) => !restrictable.has(n) && !FORCED_NAMES.has(n));
 			const pending = Object.entries(lock.tools).filter(([, r]) => r?.state === "pending").map(([n]) => n).filter((n) => restrictable.has(n));
 			const forced = [...FORCED_NAMES];
-			return { ok: true, ...snap, ruledCount: ruled.length, undiscovered, stale, pending, forced };
+			/* [v0.15 §3.5] 逐 preset 归属面 + 自动分组下发(P1b 的数据源)。
+			 * presetFaces[p].tools = 该 preset 自带的工具(归属集);
+			 * presetFaces[p].face   = 天然完整面 = 全局层 ∪ 归属集(用户不写工具名);
+			 * groups                = 按 MCP server 自动成组(取代 client.js 硬编码 7 组)。
+			 * ★ 归属表是**缓存**, 缺它不影响裁剪; 面板据此展示「这个 preset 能有什么」。 */
+			const origin = readOrigin();
+			const globalSet = new Set(snap.restrictable);
+			/* 静态兜底: preset 块声明的 MCP serverName(覆盖尚未 mount 的 preset) */
+			const servers = scanPresetServers();
+			const presetFaces = {};
+			for (const [p, rec] of Object.entries(origin.presets || {})) {
+				const own = Array.isArray(rec?.tools) ? rec.tools.filter((n) => typeof n === "string" && n) : [];
+				presetFaces[p] = {
+					tools: own,
+					face: [...new Set([...snap.restrictable, ...own])].sort(),
+					ownCount: own.length,
+					servers: servers.get(p) || [],
+				};
+			}
+			/* 静态声明了 server 但尚未观测到工具的 preset ⇒ 也要列出来(诚实标未观测) */
+			for (const [p, srv] of servers) {
+				if (presetFaces[p]) { presetFaces[p].servers = srv; continue; }
+				presetFaces[p] = { tools: [], face: [...snap.restrictable].sort(), ownCount: 0, servers: srv, unobserved: true };
+			}
+			const groups = autoGroups(snap.restrictable);
+			return { ok: true, ...snap, ruledCount: ruled.length, undiscovered, stale, pending, forced, presetFaces, groups, originUpdatedAt: origin.updatedAt || null };
+		} catch (e) { return { ok: false, error: String((e && e.message) || e) }; }
+	},
+	/* [v0.15 §3.2] 归属表(逐 preset 自带工具)—— 面板数据源 + 可单独拉取。 */
+	originInfo() {
+		try {
+			const o = readOrigin();
+			const counts = {};
+			for (const [p, rec] of Object.entries(o.presets || {})) {
+				counts[p] = Array.isArray(rec?.tools) ? rec.tools.length : 0;
+			}
+			return { ok: true, presets: o.presets || {}, counts, updatedAt: o.updatedAt || null, path: ORIGIN_PATH() };
 		} catch (e) { return { ok: false, error: String((e && e.message) || e) }; }
 	},
 	/* [v0.9] usageStats: tool/call 频率(内存态, per-tool 总量 + per-preset 分桶)。
@@ -1226,6 +1883,77 @@ const gateSvc = {
 	lockInfo() {
 		const lock = readLock();
 		return { ok: true, lock, forced: [...FORCED_NAMES], path: LOCK_PATH() };
+	},
+	/* [v0.15 §10] 列出「仍在双语义回落」的 preset —— 面板对账入口。
+	 *
+	 * 判定: 配了 preset_allow[p] 但**未配** main_preset_allow[p] ⇒
+	 *   主会话侧仍在回落共用键(该键在主会话侧是 keep-only 正面清单,
+	 *   在子代侧是 baseline 豁免集)⇒ 一张表两种强度。
+	 * 已配 main_preset_allow[p] 的 ⇒ 语义已显式拆分, 不在此列。 */
+	allowFallbacks() {
+		try {
+			const cfg = readConfig() || {};
+			const pa = cfg.preset_allow && typeof cfg.preset_allow === "object" ? cfg.preset_allow : {};
+			const ma = cfg.main_preset_allow && typeof cfg.main_preset_allow === "object" ? cfg.main_preset_allow : {};
+			const rows = [];
+			for (const [p, list] of Object.entries(pa)) {
+				if (!Array.isArray(list)) continue;
+				if (Array.isArray(ma[p])) continue;   /* 已拆分 */
+				rows.push({ preset: p, count: list.length, names: list });
+			}
+			return { ok: true, fallbacks: rows, count: rows.length };
+		} catch (e) { return { ok: false, error: String((e && e.message) || e), fallbacks: [] }; }
+	},
+	/* [v0.15 §10] 拆分动作: 把 preset_allow[p] 显式复制为 main_preset_allow[p]。
+	 *
+	 * ★ 语义**不变**(拆分前后主会话面逐件一致, 见 docs/preset-policy.md §10.4):
+	 *   拆分前主会话回落读 preset_allow[p](keep-only); 拆分后主会话读
+	 *   main_preset_allow[p](内容相同、语义同为 keep-only)⇒ 可见面不变。
+	 *   preset_allow[p] **保留**(子代侧豁免语义照旧)。
+	 *
+	 * ★ 幂等: 重复调用不产生差异(已拆分则返回 alreadySplit, 不写盘)。
+	 * ★ 可逆: 删除 main_preset_allow[p] 即回到回落(面板提供撤销)。
+	 * ★ 显式: 只在用户点「拆分」时执行, 插件启动**不自动改**用户 config。 */
+	splitAllow(preset) {
+		try {
+			const p = String(preset || "").trim();
+			if (!p) return { ok: false, error: "preset id 为空" };
+			const cur = readConfig();
+			if (!cur) return { ok: false, error: "配置文件不可读" };
+			const pa = cur.preset_allow && typeof cur.preset_allow === "object" ? cur.preset_allow : null;
+			if (!pa || !Array.isArray(pa[p])) return { ok: false, error: `preset "${p}" 未配 preset_allow(无可拆分的共用键)` };
+			const ma = cur.main_preset_allow && typeof cur.main_preset_allow === "object" ? cur.main_preset_allow : {};
+			if (Array.isArray(ma[p])) {
+				/* 幂等: 已拆分 ⇒ 不写盘(避免无谓的 updatedAt 抖动与 diff 噪音) */
+				return { ok: true, alreadySplit: true, preset: p, count: ma[p].length };
+			}
+			const next = {
+				...cur,
+				main_preset_allow: { ...ma, [p]: [...new Set(pa[p].map(String).filter(Boolean))] },
+			};
+			atomicWrite(CFG_PATH(), JSON.stringify({ _note: cur._note, ...next }, null, 1));
+			try { audit({ ts: new Date().toISOString(), ev: "allow-split", preset: p, count: next.main_preset_allow[p].length }); } catch { /* noop */ }
+			log(`拆分双语义键: main_preset_allow["${p}"] ← preset_allow["${p}"] (${next.main_preset_allow[p].length} 件)`);
+			return { ok: true, preset: p, count: next.main_preset_allow[p].length };
+		} catch (e) { return { ok: false, error: String((e && e.message) || e) }; }
+	},
+	/* [v0.15 §10] 撤销拆分: 删 main_preset_allow[p] ⇒ 回到回落(行为逐字保真)。 */
+	unsplitAllow(preset) {
+		try {
+			const p = String(preset || "").trim();
+			if (!p) return { ok: false, error: "preset id 为空" };
+			const cur = readConfig();
+			if (!cur) return { ok: false, error: "配置文件不可读" };
+			const ma = cur.main_preset_allow && typeof cur.main_preset_allow === "object" ? cur.main_preset_allow : null;
+			if (!ma || !Array.isArray(ma[p])) return { ok: true, alreadyUnsplit: true, preset: p };
+			const nextMa = { ...ma };
+			delete nextMa[p];
+			const next = { ...cur, main_preset_allow: nextMa };
+			atomicWrite(CFG_PATH(), JSON.stringify({ _note: cur._note, ...next }, null, 1));
+			try { audit({ ts: new Date().toISOString(), ev: "allow-unsplit", preset: p }); } catch { /* noop */ }
+			log(`撤销拆分: 已删 main_preset_allow["${p}"] ⇒ 回落共用键`);
+			return { ok: true, preset: p };
+		} catch (e) { return { ok: false, error: String((e && e.message) || e) }; }
 	},
 	recent(limit) {
 		try {
@@ -1397,11 +2125,17 @@ USAGE_TOTAL.set(name, (USAGE_TOTAL.get(name) || 0) + 1);
 							 * **同源同序**: main_deny 先判, 再判本表。 */
 							const mainExtra = new Set(Array.isArray(cfg?.main_preset_extra_deny?.[preset]) ? cfg.main_preset_extra_deny[preset] : []);
 							const allowCfg = Array.isArray(cfg?.preset_allow?.[preset]) ? new Set(cfg.preset_allow[preset]) : null;
+							/* [v0.15 §3.3] preset_rules 的显式 deny 也要有归因 ——
+							 * 否则被 preset_rules 禁掉的件一律报 "dtg-unknown" = 报告缺失
+							 * (与 v0.14.2 修 main_preset_extra_deny 同类问题)。 */
+							const prRules = resolvePresetRules(cfg, preset);
+							const rulesDeny = new Set(prRules.ok && Array.isArray(prRules.deny) ? prRules.deny : []);
 							const denied = [];
 							for (const n of restrictable) {
 								if (visible.has(n)) continue;
 								let reason = "dtg-unknown";
-								if (depth === 0 && mainDeny.has(n)) reason = "main_deny(主会话显式名单)";
+								if (rulesDeny.has(n)) reason = `preset_rules.deny(${preset})(用户显式禁用)`;
+								else if (depth === 0 && mainDeny.has(n)) reason = "main_deny(主会话显式名单)";
 								else if (depth === 0 && mainExtra.has(n)) reason = `main_preset_extra_deny(${preset})(主会话按角色禁用)`;
 								else if (depth > 0 && base.has(n)) reason = "baseline_deny(子代基线)";
 								else if (depth > 0 && extra.has(n)) reason = `preset_extra_deny(${preset})`;
