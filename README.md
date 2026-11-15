@@ -270,13 +270,15 @@ Key notes:
 
   | Tag | Tools | Of those, MCP tools |
   |---|---|---|
-  | `reader` | 9 | 0 |
-  | `reader-lead` | 10 | 0 |
-  | `ocr` | 10 | 2 |
-  | `literature` | 23 | 15 |
-  | `literature-lead` | 24 | 15 |
+  | `reader` | 10 | 0 |
+  | `reader-lead` | 11 | 0 |
+  | `ocr` | 11 | 2 |
+  | `literature` | 24 | 15 |
+  | `literature-lead` | 25 | 15 |
 
   Every tag carries `describe_tools` (a read-only lookup of every governed tool's one-line purpose), so a composed agent can check what a tool actually does before calling it — **including orchestration tags** (`router`, `orchestrator`): a dispatcher that cannot see what the tools do cannot compose them reliably, so it needs the same lookup entry point as an executor.
+
+  Every tag also carries `explain_gate` (a read-only diagnostic that reports which tools were cut and by which rule). It is what lets a composed agent honour the "if a tool is missing, self-diagnose before reporting" rule: a keep-only surface hides everything outside its allow-list, so without `explain_gate` in the list the agent can only say "I don't have that tool" — without the attribution that tells the parent where to look. `explain_gate` is read-only and is not itself subject to any gate, so listing it carries no governance risk.
 
   The MCP-based tags name tools from MCP servers that only exist if you have those servers installed. Missing MCP tools are **dropped from the allow-list** (and counted as `droppedUnknown`), while the remaining built-in tools still apply — so `literature` degrades to its 7 non-MCP tools rather than to an empty surface. If your tool set differs, define your own tags.
 - An **unknown** capability tag is a hard error: the dispatch is rejected with `未知能力标签: <tag>` and the list of available tags. It does not silently fall back.

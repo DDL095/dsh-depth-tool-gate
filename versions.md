@@ -2,6 +2,117 @@
 
 > 最新版本在前。版本号单一权威源 = `package.json`。条目中的 commit hash 是可校验的锚点。
 
+## v0.16.3 (2026-11-16) —— 组装子代能自查缺工具 + 编排标签可组装
+
+> 可校验锚: 源仓 commit `b3c69a3`(发布指南固化两类纪律: Release 资产检查项 + 行尾纪律) + `7af11c2`(能力标签 router 落地 20→17 件, 可组装) + `26c4778`(每个能力标签补 explain_gate); 发布仓 tag `v0.16.3`。
+> ★ 锚只列**已固化**的 commit(不列本文件自身的提交, 否则自引用即过时)。
+
+本版是 v0.16.2 的**功能补批** —— v0.16.2 是纯发布链工程批(发布物字节可复现),
+本版修的是**子代理功能缺口**: 组装出来的子代理此前**无法执行「缺工具先自查」铁律**。
+
+### §① 每个能力标签补 `explain_gate` —— 让组装子代能自查缺工具(锚 `26c4778`)
+
+★ **问题(实测)**: `agents-briefs/_common.md` 的通用铁律要求「**缺工具先自查** ⇒ 调
+`explain_gate`(只读诊断)看缺了什么、被哪条规则裁的, 再据其 reason 如实报告; 不要只说
+「没有这个工具」(**缺了归因, 主会话无法定位**)」。
+
+但组装面是 **keep-only allow 名单** ⇒ **面外一律不可见** ⇒ 标签里没有 `explain_gate` 时,
+**组装出来的子代理根本无法执行这条铁律**。实测证据: 组装子代理自检时回报
+「面内无 `explain_gate`」⇒ 只能回「没有这个工具」, 无归因。
+
+★ 而 `explain_gate` 是 dtg **自己全局注册**的工具(不在任何 preset 行里 ⇒ 所有 agent 都能拿到),
+  且**不在 `baseline_deny`**、**只读**(自身不受所报闸门约束) ⇒ **带上它零治理风险**。
+
+★ **另一侧对照(说明这不是组装路线独有的问题)**: **preset 路线**的子代面默认可见
+  `explain_gate`(6 个 preset 的子代豁免集实测全部 ✓) ⇒ 缺的只有**组装路线**。
+
+**落地**:
+- **内置表** `DEFAULT_CAPABILITIES` 5 个标签各 +1 件 `explain_gate`
+  ⇒ **随包**, 新用户的组装子代理也能自查 ⇒ literature 24 / reader 10 / reader-lead 11 /
+  literature-lead 25 / ocr 11;
+- **生产 config** 的 9 个标签各 +1 件 `explain_gate`(热生效, 改前备份);
+  ★ 核实: 生产 config 的 `capabilities` **非空(9 标签) ⇒ 整体覆盖内置表**
+  ⇒ 内置表改动对当前生产进程无效, 生产的 9/9 覆盖靠 config 单独实现;
+- 能力标签目录随之重生成(用**源码真值**, 9 标签逐项件数与 config 全一致)。
+
+★ **探针判据同步改造(避免下次加工具又假红)**: `probe-baseline-gate` 原把标签件数**写死**
+  (reader 9 / literature 23 / ocr 10 / literature-lead 24)⇒ 每给标签加一件工具就假红一次
+  (v0.16.0 加 `describe_tools`、本次加 `explain_gate`, 两次都得回头改它)
+  ⇒ 改为**从 host.v2.mjs 源码真值推导期望值**(判据自动跟随内置表演进, 真值不符照样报红),
+  并加断言「每个标签都含 `explain_gate`」。
+
+★ **实测验收**: 组装子代理实测 `explain_gate` **调用成功** ⇒ 返回「可见 18/87 | 裁 78 件」
+  + 逐件归因(baseline_deny 53 件 / dtg-unknown 25 件)⇒ 铁律可执行。
+  探针 + smoke **39 套全绿**; README 一致性闸 132 pass / 0 fail; 新用户框架文档探针 29 pass / 0 fail。
+
+★ **附带发现(记录, 未处理)**: `explain_gate` 的归因里有第三类 **`dtg-unknown`**(25 件) ——
+  指「工具在注册表里但**不在本会话挂载**」(如 MCP 工具、`terminal`/`shell`)⇒ 与
+  「被某条规则裁掉」是**两回事**(前者是压根没挂载, 后者是挂了又被裁)。这条归因的措辞
+  可读性可再优化(暂不动)。
+
+### §② 能力标签 `router` 落地: 从「死标签」到可组装的编排面(锚 `7af11c2`)
+
+★ 用户裁定(与 v0.16.1 §② 同一思想): 「子代理各级平级发送是可以接受的, 向下派送级联是没问题,
+  只有 ask 是不可以接受的」。
+
+**原问题(实测)**: `config.capabilities.router` 是照抄 `cordis-router` **主会话面**建的
+(20 件, 含 `preset_dispatch` / `preset_send_message` / `ask_user_question` / `dispatch_composed`)。
+但**组装生的是子代**, 受子代底线管 ⇒ `dispatch_composed(capabilities: ["router"])`
+被**底线闸整批拒绝**:
+```
+错误: baseline_deny 是治理底线, 不接受 composed 组装
+—— 标签 router 含 [preset_dispatch,preset_send_message,ask_user_question]
+```
+⇒ **`router` 标签从来就不能用于组装**(非 v0.16.1 引入, 是那 3 件的既有结果);
+且能力标签目录给决策面看「可组装标签」参考时, 展示着一个**实际组装不了**的标签 ⇒ 误导。
+
+**落地**: 按「剔 3 件底线件」方案改 `config.capabilities.router`: **20 → 17 件** ——
+剔掉 `ask_user_question`(裁定: 子代不该问用户) + `preset_dispatch` + `preset_send_message`。
+★ 之后又因 §① 补 `explain_gate` ⇒ **17 → 18 件**。
+
+★ **为什么平级外送两件要从标签里剔掉、而不是留在标签里**:
+它们是**底线件**(内置 `DEFAULT_BASELINE` 的「派单系 3」, 理由「平级外送是主会话职权」
+—— 该理由已被用户裁定推翻), 而**组装闸**只认全局底线 + 一个 `dispatch_composed` 单件豁免,
+**不读** `preset_allow` 的 per-preset 豁免 ⇒ 标签里留着它们就必然撞闸。
+⇒ 平级外送/续聊权改由 **preset 路线**的 `preset_allow["cordis-router"]` 提供
+(该豁免集**本就**含这两件, 已实测子代面可见 ✓)。
+
+★ **影响面(实测)**: 改动只落在**本机 profile 的 `depth-tool-gate.config.json`**, **不入随包** ——
+随包 `config.default.json` 无 `capabilities` 键、内置 `DEFAULT_CAPABILITIES` 只有 5 个执行面标签
+⇒ **新用户压根没有 `router` 标签**, 不存在「装到死标签」的问题; 新用户的编排面是
+`reader-lead` / `literature-lead`(含 `dispatch_composed`, 本就组装得出来)
+⇒ 本节只修**本机 profile 的自定义标签**与**能力标签目录的显示真实性**。
+
+**实测验收**:
+| 判据 | 结果 |
+|---|---|
+| 组装闸 | `dispatch_composed(capabilities: ["router"])` **由「整批拒」变为成功派出** |
+| 子代理实测 | 子代理**实际看到该面全部件**(`subagent`/`workflow`/`todo_write`/`describe_tools` 全在面内、无「不在你的工具面内」标记) ⇒ 与 allow 数精确一致 |
+| 能力标签目录 | 逐项件数与 config **全部一致**、9 标签 |
+| preset 侧 | 子代豁免集 18 件: 平级外送 ✓ / 续聊 ✓ / 级联 ✓ / 查说明 ✓ / **ask 被裁** ✓ —— 本就符合裁定, 未改动 |
+
+★ **教训(自我记录)**: 我在重生成能力标签目录时**手写**了 `CAPABILITY_PURPOSE` 的部分条目
+(只给 2 项), 结果 7 个标签的语义退化成「(待补语义)」、目录从 751B 掉到 564B
+⇒ **必须用源码抽取的真值**, 不手写常量(仓内铁律「复制常量即假绿」的变体)。
+发现后已改用源码真值重生成并新增 `scripts/verify-catalog.mjs` 独立核验(9/9 ✓)。
+
+### §③ 发布指南固化两类纪律(锚 `b3c69a3`)
+
+① **GitHub Release 资产检查项**(4 条): 资产名必须 = `<包名>-<版本>.tgz`(建完必须
+`gh release view` 复验, 不能只看 upload 的 exit code) / `isDraft` 必须复验
+(v0.16.0 曾因删 tag 重建降级为 draft:true ⇒ 资产不可下载) / 资产 digest 必须 = 本地 pack 的
+sha256 / 直连下载复验必须先 `rm -f`(404 会保留旧文件 ⇒ sha 误判)。
+另记「资产替换手法已实测安全(不会降级 draft)」+「tgz 不在版本库 ⇒ 换 tgz 不需重建 tag」。
+② **行尾纪律**: 发布物文本文件必须零 CRLF(A19 断言守); 根因修法 = 仓库加 `.gitattributes`,
+   双保险 = 导出器 T1.5 归一 + A19; `.gitattributes` 不进 npm 包(构建期配置)但**发布仓必须
+   单独持有**(它是导出物镜像, npm publish 惯例在该目录现场打包 ⇒ 该目录行尾直接决定上架字节)。
+③ 把我这两次的失误写进纪律: 「做会改共享文件的实验前必须把影响面纳入清单, 清理要逐项还原」
+   —— 实测: 为验证 `.gitattributes` 在发布仓执行 `rm -f client.js && git checkout -- client.js`,
+   清理时只删了 `.gitattributes`、还原了 `core.autocrlf`, 忘了还原 `client.js`
+   ⇒ 用户随后在发布仓现场打包, 打出「半归一」产物上线(内容无误, 但字节与其它渠道不一致)。
+
+---
+
 ## v0.16.2 (2026-11-15) —— 发布物行尾归一：跨平台可复现
 
 > 可校验锚: 源仓 commit `069256f`(对账闸排除发布中间物 tgz) + `1c8d90f`(T1.5 行尾归一 + A19 断言) + `a47a898`(行尾归一执行器) + `c25bef0`(加 .gitattributes 根治); 发布仓 tag `v0.16.2`。
@@ -57,6 +168,8 @@
   `.gitattributes`、还原了 `core.autocrlf`, **忘了还原 `client.js`** ⇒ 用户在发布仓现场
   打包时打出「半归一」产物(npm 线上 `71af681f…`)。教训: 做「会改共享文件」的实验前
   必须把影响面纳入清单, 清理也要彻底。
+
+---
 
 ## v0.16.1 (2026-11-15) —— 编排面拿得到工具说明 + 新用户框架文档 + 路线图
 

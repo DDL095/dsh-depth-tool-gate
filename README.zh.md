@@ -271,13 +271,15 @@ plugin_manager(action="install_bundle", target="dsh-depth-tool-gate")
 
   | 标签 | 工具件数 | 其中 MCP 件 |
   |---|---|---|
-  | `reader` | 9 件 | 0 |
-  | `reader-lead` | 10 件 | 0 |
-  | `ocr` | 10 件 | 2 |
-  | `literature` | 23 件 | 15 |
-  | `literature-lead` | 24 件 | 15 |
+  | `reader` | 10 件 | 0 |
+  | `reader-lead` | 11 件 | 0 |
+  | `ocr` | 11 件 | 2 |
+  | `literature` | 24 件 | 15 |
+  | `literature-lead` | 25 件 | 15 |
 
   **所有**标签都带 `describe_tools`（只读查询每件受治理工具的一句用途说明）⇒ 组装出来的 agent 能在调用前先确认「这件到底能干什么」—— **编排面**（`router` / `orchestrator`）也不例外：看不到工具能干啥的派单方，无法可靠地编排工具，它需要与执行方同样的查证入口。
+
+  **所有**标签也都带 `explain_gate`（只读诊断：报告哪些工具被裁、被哪条规则裁）⇒ 这正是「缺工具先自查」这条铁律能被执行的前提：组装面是 **keep-only allow 名单**，面外一律不可见 ⇒ 标签里没有 `explain_gate` 时，组装出来的 agent 只能回一句「没有这个工具」—— **缺了归因**，主会话无法定位。它是只读工具（自身不受所报闸门约束）且不在底线清单里 ⇒ 带上它零治理风险。
 
   基于 MCP 的标签点名的工具，只有你装了那些 MCP server 才存在。缺失的 MCP 工具会**从 allow 名单里丢弃**（并计入 `droppedUnknown`），其余内置工具照常生效 —— 所以 `literature` 会退化成它的 7 件非 MCP 工具，而不是空面。工具集不一样就自己定义标签。
 - **未知**能力标签是**直接失败**：派单被拒并给出 `未知能力标签: <tag>` 与可用标签清单，不会静默回落。

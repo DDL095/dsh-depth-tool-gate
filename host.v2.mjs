@@ -251,6 +251,14 @@ const CAP_TTL_MS = 60_000;
  *     的用途才能可靠地编排; 编排面因此也需要同一个查证入口。
  *   ★ 说明台账是**全库**的(不止本面), 「可见」只作标注 ⇒ 编排面能查到面外工具的
  *     完整说明(实测 orchestrator 面查 keyword=search 返回 23 件、含面外工具)。
+ *   ★ [v0.16.3] **每个**标签含 `explain_gate`(只读诊断: 可见数/被裁名单+归因)。
+ *     理由: `agents-briefs/_common.md` 的通用铁律要求「缺工具先自查 ⇒ 调 explain_gate
+ *     看缺了什么、被哪条规则裁的」⇒ 但组装面是 **keep-only allow 名单**, 面外一律不可见
+ *     ⇒ 标签里没有 explain_gate 时, **组装出来的子代理根本无法执行这条铁律**
+ *     (实测: 组装子代理报「面内无 explain_gate」, 只能说「没有这个工具」——
+ *      缺了归因, 主会话无法定位)。preset 路线不受影响(子代面默认可见 explain_gate),
+ *     但**组装路线**的标签必须显式带上它才能兑现铁律。
+ *     ★ 它是**只读**诊断工具(自身不受所报闸门约束)且**不在 baseline_deny** ⇒ 加它零治理风险。
  */
 const DEFAULT_CAPABILITIES = {
 	literature: [
@@ -260,18 +268,18 @@ const DEFAULT_CAPABILITIES = {
 		"mcp__research-tools__search_validate", "mcp__research-tools__get_recent_result", "mcp__research-tools__list_recent_results",
 		"mcp__zotero__check_local", "mcp__zotero__search", "mcp__zotero__search_notes",
 		"web_search", "web_fetch", "read", "glob", "grep", "working_directory", "todo_write",
-		"describe_tools",
+		"describe_tools", "explain_gate",
 	],
 	reader: [
 		"web_fetch", "web_search", "read", "read_image", "glob", "grep", "working_directory", "todo_write",
-		"describe_tools",
+		"describe_tools", "explain_gate",
 	],
 	/* [v0.4.7] lead 系标签: 面内含 dispatch_composed —— 该子代可再派一级动态组装孙代
 	 * (spawn 侧 maxDepth 条件放行 +1, 总闸 maxDepth=12 仍管辖); 无 lead 标签的面
 	 * 级联仍被钉死在自身深度。 */
 	"reader-lead": [
 		"web_fetch", "web_search", "read", "read_image", "glob", "grep", "working_directory", "todo_write",
-		"dispatch_composed", "describe_tools",
+		"dispatch_composed", "describe_tools", "explain_gate",
 	],
 	/* [v0.5] literature-lead: 文献检索面+派单权——子代 foreman 化(自带带队再派一级)。 */
 	"literature-lead": [
@@ -281,12 +289,12 @@ const DEFAULT_CAPABILITIES = {
 		"mcp__research-tools__search_validate", "mcp__research-tools__get_recent_result", "mcp__research-tools__list_recent_results",
 		"mcp__zotero__check_local", "mcp__zotero__search", "mcp__zotero__search_notes",
 		"web_search", "web_fetch", "read", "glob", "grep", "working_directory", "todo_write",
-		"dispatch_composed", "describe_tools",
+		"dispatch_composed", "describe_tools", "explain_gate",
 	],
 	ocr: [
 		"mcp__paddleocr__paddleocr_vl", "mcp__minimax-plan__understand_image",
 		"read_image", "read", "write", "glob", "grep", "working_directory", "todo_write",
-		"describe_tools",
+		"describe_tools", "explain_gate",
 	],
 };
 

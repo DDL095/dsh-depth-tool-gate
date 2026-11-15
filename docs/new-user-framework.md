@@ -124,14 +124,21 @@ tool-plugin-manager / prompt-slim
 
 | 标签 | 件数 | 内容 |
 |---|---|---|
-| `literature` | 23 | research-tools 检索族 + zotero + web + 文件 + todo |
-| `reader` | 9 | web(fetch/search) + 文件 + 图像 + todo |
-| `reader-lead` | 10 | reader + `dispatch_composed`（可再派一级孙代） |
-| `literature-lead` | 24 | literature + `dispatch_composed` |
-| `ocr` | 10 | paddleocr + minimax 视觉 + 文件读写 + todo |
+| `literature` | 24 | research-tools 检索族 + zotero + web + 文件 + todo |
+| `reader` | 10 | web(fetch/search) + 文件 + 图像 + todo |
+| `reader-lead` | 11 | reader + `dispatch_composed`（可再派一级孙代） |
+| `literature-lead` | 25 | literature + `dispatch_composed` |
+| `ocr` | 11 | paddleocr + minimax 视觉 + 文件读写 + todo |
 
 ★ **每个标签都含 `describe_tools`** —— 子代理在调用前可查「这件工具到底能干什么」
 （完整说明，非截断短描述）。见 `tool-annotations.md`。
+
+★ **每个标签也都含 `explain_gate`** —— 只读诊断：报告「可见 N/M、被裁 K 件」+ 每件
+**被哪条规则裁的**（baseline_deny / main_deny / preset_extra_deny / 正面清单外 / lock pending /
+别的 preset 自带未挂载）。它是「缺工具先自查」这条铁律能被执行的**前提**：组装面是
+**keep-only allow 名单**，面外一律不可见 ⇒ 标签里没有 `explain_gate` 时，组装出来的子代理
+只能回一句「没有这个工具」—— 缺了归因，主会话无法定位。
+（它是只读工具、自身不受所报闸门约束、且不在底线清单里 ⇒ 带上它零治理风险。）
 
 ### 3.4 `workflow` —— 批量子代理编排
 
@@ -152,7 +159,7 @@ JS 脚本编排 subagent 群（`agent` / `pipeline` / `parallel` 钩子）。适
 | MoA | 9 | 对抗审查由主会话决策发起，不在树内自发（防编排风暴 + 成本失控） |
 | 宿主管家 | 5 | `dsh_web_restart` / `plugin_manager` / `provenance_audit` / `video_cap_probe` / `simulate_prune`（宿主生命周期权力不下放） |
 | goal/schedule | 8 | 长任务与定时是主会话职权 |
-| 派单系 | 3 | `illus_subagent` / `preset_dispatch` / `preset_send_message`（平级外送是主会话职权） |
+| 派单系 | 3 | `illus_subagent` / `preset_dispatch` / `preset_send_message`（内置底线的理由是「平级外送是主会话职权」；★ 该理由已被用户 2026-11-15 裁定推翻 ——「子代理各级平级发送是可以接受的」⇒ 子代理要平级外送时，走 **preset 路线**的 `preset_allow` 豁免集获得，不靠组装标签） |
 | 编排 | 1 | `workflow`（多代理编排风暴入口） |
 | MCP 维护类 | 8 | research-tools / zotero 的维护诊断件（检索类全保留） |
 

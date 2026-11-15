@@ -19,7 +19,7 @@
 | R1 | [会话间沟通拓扑不完整](#r1-会话间沟通拓扑不完整) | 宿主级 | 待决（用户已阅，明确「先不处理」） |
 | R2 | [回执分层：结论 / 证据分离](#r2-回执分层结论--证据分离) | 插件内 | 待决（与 R1 同批搁置） |
 | R3 | [上下文水位对模型可见](#r3-上下文水位对模型可见) | 宿主级 | 待决 |
-| R4 | [能力标签 `router` 与 preset 面脱节](#r4-能力标签-router-与-preset-面脱节) | 插件内 | 待决 |
+| R4 | 能力标签 `router` 与 preset 面脱节 | 插件内 | ✅ **已实现**（2026-11-15，方案 A：20→17 件，可组装）—— 按纪律已移出本文，见 `versions.md` 顶部的「【未发布 · 待下一版】」块 |
 | R5 | [档 2 独立配置入口](#r5-档-2-独立配置入口) | 插件内 | 暂不做（见条目） |
 | R6 | [`preset_allow` 子代侧双义彻底拆](#r6-preset_allow-子代侧双义彻底拆) | 插件内 | 部分完成 |
 | R7 | [awesome 插件目录条目](#r7-awesome-插件目录条目) | 生态 | 暂缓（用户裁决） |
@@ -117,59 +117,6 @@ R1 不做的话，兄弟协同全靠父中转，父的膨胀更严重 ⇒ **R2 �
 
 - `[宿主级]`：把上下文水位注入模型可见上下文（或作为工具返回值）
 - 与 R2 配合：水位可见 ⇒ 模型才会主动派单；R2 让派单的回执更划算
-
----
-
-## R4 能力标签 `router` 与 preset 面脱节
-
-**状态**：待决
-
-### 问题（实测）
-
-`config.capabilities.router` 是照抄 `cordis-router` **主会话面**建的
-（20 件，含 `preset_dispatch` / `preset_send_message` / `ask_user_question` / `dispatch_composed`）。
-
-但**组装生的是子代**，受子代底线管 ⇒ `dispatch_composed(capabilities: ["router"])`
-会被**底线闸整批拒绝**：
-
-```
-错误: baseline_deny 是治理底线, 不接受 composed 组装
-—— 标签 router 含 [preset_dispatch,preset_send_message,ask_user_question]
-```
-
-（`dispatch_composed` 自身被单件豁免 —— 它是级联机制本身。）
-
-⇒ **`router` 标签从来就不能用于组装**（非本次改动引入，是那 3 件的既有结果）。
-
-### 附带影响
-
-1. 能力标签目录（`capability-catalog.txt`）给决策面看「可组装标签」参考，
-   里面展示着一个**实际组装不了**的标签 ⇒ **误导**；
-2. 2026-11-15 已给 `capabilities.router` 加了 `describe_tools`，
-   但因整标签进不了闸，**该改动在组装路径上无效**（真正生效的是
-   `main_preset_allow["cordis-router"]` 那处）。
-
-### 候选处置
-
-| | 做法 | 效果 |
-|---|---|---|
-| A | 从 `capabilities.router` 剔掉 3 件底线件 ⇒ 17 件 | 得到「编排子代理该有的完整面」；与主会话 `cordis-router` 面不再逐件相同（差的恰是子代理本就不该有的 3 件）；目录变真实 |
-| B | 保持现状，`router` 仅作 preset 面镜像 | 组装一律用 `orchestrator`；目录继续挂着会撞错的标签 |
-| C | 从 `baseline_deny` 移除那 3 件 | **全局放宽** —— 所有子代理都获得外送/问用户权，动治理底线 |
-
-### 与用户裁定的关系
-
-用户 2026-11-15 裁定：「子代理各级平级发送是可以接受的，向下派送级联是没问题，
-只有 ask 是不可以接受的」⇒ 按此思想，**A 才是与裁定一致的形态**
-（`preset_dispatch` / `preset_send_message` 子代本就该有，`ask_user_question` 不该有）。
-
-★ 已在别处落实的部分（`cordis-router` **preset** 侧）：子代豁免集 18 件
-（去 ask，留平级外送/续聊/级联），主会话正面清单 20 件（保留 ask + describe_tools）。
-**待决的只是能力标签 `router` 这一条**（它与 preset 是两套东西）。
-
-### 要做的话
-
-纯 config 改动（热生效，不需重启，改前备份）+ 文档同步 + 目录语义澄清。
 
 ---
 
