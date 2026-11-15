@@ -2,6 +2,62 @@
 
 > 最新版本在前。版本号单一权威源 = `package.json`。条目中的 commit hash 是可校验的锚点。
 
+## v0.16.2 (2026-11-15) —— 发布物行尾归一：跨平台可复现
+
+> 可校验锚: 源仓 commit `069256f`(对账闸排除发布中间物 tgz) + `1c8d90f`(T1.5 行尾归一 + A19 断言) + `a47a898`(行尾归一执行器) + `c25bef0`(加 .gitattributes 根治); 发布仓 tag `v0.16.2`。
+> ★ 锚只列**已固化**的 commit(不列本文件自身的提交, 否则自引用即过时)。
+
+本版是**纯发布链工程批** —— 功能面与 v0.16.1 相同, 修的是「发布物字节不可复现」这一个问题。
+
+### §① 根因(实测坐实, 非推断)
+
+源仓 `core.autocrlf=true`, 而根 `.gitattributes` 只覆盖 `agent-config/**` ⇒ `depth-tool-gate/`
+下文件在**工作树**里被检出成 CRLF(**blob 本身是 LF**)⇒ `release-export` 的 T1 用 `cpSync`
+**从工作树原样拷贝** ⇒ 工作树状态泄漏进发布物。
+
+实测后果(2026-11-15 v0.16.1 发布链对账时撞出):
+- npm 上**已发布的 0.16.0 包内行尾不统一** —— 3 件文本文件 CRLF / 31 件 LF;
+- **同一 tag 在不同机器产出不同 tarball 字节** ⇒ 逐文件 sha256 对账失去跨平台意义;
+  实测三处同版本 sha256 全不同: npm 线上 `71af681f…` / GitHub 资产 `e713dfeb…` /
+  本地归一 `86cfbfb5…` —— **内容逐件一致, 只差行尾**。
+
+运行时影响为 0(JS 引擎与 JSON 解析器、drawio XML 都接受 CRLF), 但**发布链的可复现性是硬要求**。
+
+### §② 三层修法
+
+| 层 | 改动 | 作用 |
+|---|---|---|
+| **根治** | 源仓 `depth-tool-gate/.gitattributes` = `* text=auto eol=lf`(锚 `c25bef0`) | 工作树本身就统一 ⇒ 不用再靠兜底 |
+| **双保险** | 导出器 **T1.5 行尾归一** + **A19 断言**(锚 `1c8d90f`) | 即使工作树脏了, 导出物仍零 CRLF; A19 独立于替换器, 检测器自己数 |
+| **工具** | `scripts/apply-gitattributes-lf.mjs`(锚 `a47a898`) | 默认 dry-run, `--apply` 才动手; 带影响面清单 |
+
+★ 写法与仓内先例一致(根 `.gitattributes` 的 `agent-config/** text eol=lf`), 但放**子目录**
+⇒ 子目录优先级更高, **不动根文件、不影响其它插件**。
+
+★ 发布仓同样加 `.gitattributes`: 它是**导出物镜像**, 而 `npm publish` 惯例在**该目录**现场
+打包 ⇒ 该目录的行尾直接决定上架字节; 且 `.gitattributes` **不在** package.json 的 files
+白名单 ⇒ **不入包** ⇒ 必须由发布仓单独持有, 否则任何 clone 出来又回到 CRLF。
+
+### §③ 顺带修掉对账闸的一个假红(锚 `069256f`)
+
+`release-reconcile.mjs` 的 `fileHashes` 未排除发布中间物 `*.tgz` ⇒ 只要在导出目录里
+`npm pack` 过(发布指南第 4 步正是如此), 那个 tgz 就被算成「只在导出物里的文件」⇒ 报红。
+★ v0.16.0 当时 15 pass 是**侥幸**(那次 tgz 落在别处, 导出目录恰好干净)。
+修法: 跳过 `*.tgz` 并**打印跳过清单**(不静默)。
+
+### §④ 实测
+
+- 源仓归一: 8 件 CRLF → **0**; `git status` 只显示新增 `.gitattributes` ⇒ **blob 未变、零内容 diff**;
+- 发布仓归一: 2 件 CRLF → **0**; 同为零内容 diff;
+- 探针 + smoke **39 套全绿**(逐个退出码复跑; 含 `probe-line-endings` 对工作树也转绿);
+- 隔离克隆完整验证(先前做的): 加 `.gitattributes` + 重新检出 ⇒ 131 件 CRLF 全归零 CLEAN、
+  探针 38 套全绿、产物 sha256 与本机 T1.5 兜底**完全相同** ⇒ 跨平台可复现;
+- ★ **诚实记录一处我方失误**: v0.16.1 发布时, 我为验证 `.gitattributes` 在**发布仓**执行了
+  `rm -f client.js && git checkout -- client.js`, 把它的工作树留在 LF 态, 而清理时只删了
+  `.gitattributes`、还原了 `core.autocrlf`, **忘了还原 `client.js`** ⇒ 用户在发布仓现场
+  打包时打出「半归一」产物(npm 线上 `71af681f…`)。教训: 做「会改共享文件」的实验前
+  必须把影响面纳入清单, 清理也要彻底。
+
 ## v0.16.1 (2026-11-15) —— 编排面拿得到工具说明 + 新用户框架文档 + 路线图
 
 > 可校验锚: 源仓 commit `be9e3b2`(放行 describe_tools: 全局层新工具被自家闸门裁) + `04ae551`(探针判据三修 + 多帧 zstd 解码器) + `d34ca9e`(describe_tools 进编排面, 用户裁定) + `543ee30`(cordis-router 子代侧去掉 ask_user_question, 用户裁定) + `be3d0fc`(新用户框架文档 + 路线图 + 三套文档守门探针); 发布仓 tag `v0.16.1`。
