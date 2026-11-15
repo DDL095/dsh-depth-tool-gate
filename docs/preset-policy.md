@@ -266,7 +266,7 @@ const legacy = [...new Set([...base, ...pending].filter((n) => !exempt.has(n)).c
 |---|---|---|
 | illus-deep | 6 | **6 件**（image 六件全部豁免） |
 | aigen-deep | 6 | **6 件** |
-| cordis-router | 19 | **4 件**（`dispatch_composed` / `preset_dispatch` / `preset_send_message` / `ask_user_question`） |
+| cordis-router | 18 | **3 件**（`dispatch_composed` / `preset_dispatch` / `preset_send_message`）—— ★ `ask_user_question` 已于 2026-11-15 移出豁免集（用户裁定：平级外送与向下级联可接受，**唯独 ask 不可接受** ⇒ 子代不许直接问用户）；主会话侧由 `main_preset_allow["cordis-router"]` 单独保留 ask + `describe_tools` |
 | ppt / excel / word-deep | 3 / 59 / 120 | 0（这些是正向白名单，与底线闸无交集） |
 
 ⇒ 所以档 2 的真实状态是：
@@ -457,6 +457,14 @@ golden(preset, depth) = { effective: string[], denied: string[], missing: string
 
 不能直接砍回落 —— 生产 `preset_allow` 有 6 个键，其中 `cordis-router` 只配了共用键、
 没配 `main_preset_allow`（`config.json:283-303`）。直接取消回落 ⇒ router 主会话面**突然变 19 件**。
+
+> ★ **状态更新（2026-11-15）**：`cordis-router` **已完成拆分** —— `main_preset_allow["cordis-router"]`
+> 已配齐（20 件），故该 preset 不再回落共用键，`allowFallbacks()` 对账面板里也不再列为
+> 「双语义回落」。当前仍在回落的只剩 5 个域 preset（`illus-deep` / `aigen-deep` /
+> `ppt-deep` / `excel-deep` / `word-deep`）—— 它们是**正向白名单**语义（豁免域工具为主），
+> 与 router 的编排面性质不同，拆分与否由各自面内容决定。
+> ★ 拆分后子代侧与主会话侧**可以不同名单**：本仓已用这一能力把 `ask_user_question`
+> 只留在主会话侧（子代不许直接问用户），同时主会话侧多带 `describe_tools`。
 
 迁移策略（**显式、可见、可回滚**）：
 

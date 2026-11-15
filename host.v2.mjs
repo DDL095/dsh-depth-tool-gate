@@ -241,12 +241,16 @@ const CAP_TTL_MS = 60_000;
 /* [v0.4.2] 能力标签表缺省(config.capabilities 存在则整体覆盖): 标签→allow 名单。
  * allow=keep-only 语义: 面外一切(含未来新全局工具)不可见。
  *
- * ★ [v0.16.0] **执行面**标签含 `describe_tools`(查工具用途说明, 只读)。
+ * ★ [v0.16.0] **所有**标签含 `describe_tools`(查工具用途说明, 只读)。
  *   理由: 组装面里的子代是「按能力标签领活的执行者」⇒ 它们正是**最需要**知道自己
  *   能调的那些工具到底能干什么的那一方 ⇒ 不给它查说明的入口 = 说明机制对它们无效
  *   (实测: reader 组装面 8 件里不含 describe_tools ⇒ 子代理查不到任何说明)。
- *   ★ **编排/决策面**标签(router/orchestrator)**不含**: 它们不执行工具,
- *     给出全量说明只增加面与注意力(它们的选型依据是「能力标签目录」, 不是逐件说明)。
+ *   ★ [v0.16.0 用户裁定纠正] **编排/决策面**标签(router/orchestrator)**同样含**:
+ *     先前判「不含」(理由: 给出全量说明只增加面与注意力)**已被用户推翻** ——
+ *     「不知道工具是什么, 那么 router 就很难编排工具」⇒ 编排方必须能查每件工具
+ *     的用途才能可靠地编排; 编排面因此也需要同一个查证入口。
+ *   ★ 说明台账是**全库**的(不止本面), 「可见」只作标注 ⇒ 编排面能查到面外工具的
+ *     完整说明(实测 orchestrator 面查 keyword=search 返回 23 件、含面外工具)。
  */
 const DEFAULT_CAPABILITIES = {
 	literature: [
@@ -305,7 +309,10 @@ function log(msg) { console.log(`[${NAME}] ${msg}`); }
 function warn(msg) { console.warn(`[${NAME}] ${msg}`); }
 
 /* ── 默认负面清单(治理蓝本: 10-12 image-tool-gates 实执行的画廊6 + 10-16 B类26
- *    + 本次 11-06 审计的高位/低语义件; 与调研文档 §5.4 Tier1 同源) ── */
+ *    + 本次 11-06 审计的高位/低语义件; 与调研文档 §5.4 Tier1 同源)
+ *    ★ 共 40 件(画廊6 + MoA9 + 管家5 + goal/schedule8 + 派单3 + 编排1 + MCP维护8);
+ *      分组件数与清单件数必须一致 —— 由 scripts/probe-baseline-sync.mjs 守卫
+ *      (含 config.default.json 与本表「同源同值」的逐件同序比对)。 ── */
 const DEFAULT_BASELINE = [
 	/* 文生图/画布 6(10-12 实执行名单原文) */
 	"generate_image", "generate_images", "edit_image", "find_inspiration", "canvas_state", "view_canvas",
@@ -314,7 +321,7 @@ const DEFAULT_BASELINE = [
 	"moa_roadmap", "moa_health", "moa_cache_probe",
 	/* 宿主管家 5(宿主生命周期/治理权力不下放) */
 	"dsh_web_restart", "plugin_manager", "provenance_audit", "video_cap_probe", "simulate_prune",
-	/* goal/schedule 6(长任务/定时是主会话职权; schedule 工具名为宿主实际注册名) */
+	/* goal/schedule 8(长任务/定时是主会话职权; schedule 工具名为宿主实际注册名) */
 	"create_goal", "get_goal", "update_goal", "set_goal_durable",
 	"schedule_create", "schedule_edit", "schedule_list", "schedule_view",
 	/* 派单系 3(平级外送是主会话职权) */

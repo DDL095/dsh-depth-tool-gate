@@ -277,7 +277,7 @@ plugin_manager(action="install_bundle", target="dsh-depth-tool-gate")
   | `literature` | 23 件 | 15 |
   | `literature-lead` | 24 件 | 15 |
 
-  **执行面**标签带 `describe_tools`（只读查询每件受治理工具的一句用途说明）⇒ 组装出来的 worker 能在调用前先确认「这件到底能干什么」。**编排面**（`router` / `orchestrator`）刻意不含：它们只派单不执行，选型依据是「能力标签目录」而非逐件说明。
+  **所有**标签都带 `describe_tools`（只读查询每件受治理工具的一句用途说明）⇒ 组装出来的 agent 能在调用前先确认「这件到底能干什么」—— **编排面**（`router` / `orchestrator`）也不例外：看不到工具能干啥的派单方，无法可靠地编排工具，它需要与执行方同样的查证入口。
 
   基于 MCP 的标签点名的工具，只有你装了那些 MCP server 才存在。缺失的 MCP 工具会**从 allow 名单里丢弃**（并计入 `droppedUnknown`），其余内置工具照常生效 —— 所以 `literature` 会退化成它的 7 件非 MCP 工具，而不是空面。工具集不一样就自己定义标签。
 - **未知**能力标签是**直接失败**：派单被拒并给出 `未知能力标签: <tag>` 与可用标签清单，不会静默回落。
@@ -303,6 +303,9 @@ plugin_manager(action="install_bundle", target="dsh-depth-tool-gate")
 | `cordis-sub` | 通用子代理 preset，注入了岗位引导 |
 | `cordis-router` | 纯编排主会话 preset：无执行工具，只做派发 |
 
+> **刚装上先读这个**：[新用户框架](docs/new-user-framework.md) —— 你拿到的是什么架构、
+> 谁向谁汇报、怎么派活。
+
 ---
 
 ## 隐私
@@ -319,11 +322,14 @@ plugin_manager(action="install_bundle", target="dsh-depth-tool-gate")
 
 | 文档 | 内容 |
 |---|---|
+| [新用户框架](docs/new-user-framework.md) | **先读这个** —— 装完得到的架构：角色、工具面、派活路径、边界 |
 | [面板指南](docs/panel-guide.md) | 逐个 Tab、逐个字段 |
 | [Agent FAQ](docs/agent-faq.md) | 机制如何运作，从 agent 的视角看 |
 | [排障](docs/troubleshooting.md) | 先列静默降级类问题：查什么、按什么顺序查 |
 | [台账结构](docs/audit-schema.md) | 台账与 lock 文件的每个字段 |
 | [工具注解](docs/tool-annotations.md) | 每件被治理的工具是什么、为何被治理 |
+| [preset 策略](docs/preset-policy.md) | 双清单治理模型与各 preset 配置键 |
+| [路线图](docs/roadmap.md) | **尚未实现**的条目 —— 每条附实测依据与动哪里 |
 | [变更日志](versions.md) | 发布历史 |
 
 ---

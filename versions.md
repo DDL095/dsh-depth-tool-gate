@@ -2,6 +2,110 @@
 
 > 最新版本在前。版本号单一权威源 = `package.json`。条目中的 commit hash 是可校验的锚点。
 
+## v0.16.1 (2026-11-15) —— 编排面拿得到工具说明 + 新用户框架文档 + 路线图
+
+> 可校验锚: 源仓 commit `be9e3b2`(放行 describe_tools: 全局层新工具被自家闸门裁) + `04ae551`(探针判据三修 + 多帧 zstd 解码器) + `d34ca9e`(describe_tools 进编排面, 用户裁定) + `543ee30`(cordis-router 子代侧去掉 ask_user_question, 用户裁定) + `be3d0fc`(新用户框架文档 + 路线图 + 三套文档守门探针); 发布仓 tag `v0.16.1`。
+> ★ 锚只列**已固化**的 commit(不列本文件自身的提交, 否则自引用即过时)。
+
+本版是 v0.16.0 的**发布后补批** —— v0.16.0 已上线 npm, 此后用户连续裁定带来的三处语义修正
+与一批文档补齐在此成版。
+
+### §① 用户裁定: `describe_tools` 进**编排面**(锚 `d34ca9e`)
+
+★ 推翻 v0.16.0 里我方「编排面刻意不含 describe_tools」的判断。**先前理由不成立**:
+派单方若看不到每件工具能干啥的完整说明, 就无法可靠地编排工具 ⇒ 编排面比执行面**更**需要
+这个查证入口。
+
+落地三处(生产 config, 热读 ⇒ 对之后创建的会话立即生效):
+| 位置 | 变更 | 语义 |
+|---|---|---|
+| `capabilities.router` | 19 → 20 件(+describe_tools) | 组装面(编排者)拿到查证入口 |
+| `capabilities.orchestrator` | 4 → 5 件(+describe_tools) | 同上 |
+| `main_preset_allow["cordis-router"]` | **新设** 20 件(19 旧名单 + describe_tools) | 拆双语义: 子代侧 `preset_allow`(豁免集)逐字不动, 主会话侧显式正面清单 |
+
+★ 第三处的必要性(实测坐实): `cordis-router` 主会话原先**回落到**共用键
+`preset_allow["cordis-router"]`(19 件 keep-only)⇒ **主会话的真 router 拿不到
+describe_tools** ⇒ 缺口在**最该修的那条路径**上确实存在。
+
+实测验收: `dispatch_composed(capabilities=["orchestrator"])` 面 allow=5; 子代理
+`keyword="search"` 返 23 件、具名查 2 件、**含面外工具**(generate_image)并正确标
+「不在你的工具面内」; 普通 preset 子代(cordis-sub)调用成功、无参数返 122 件。
+
+### §② 用户裁定: 子代不许直接问用户(锚 `543ee30`)
+
+★ 用户原话: 「对于子代理各级平级发送是可以接受的, 然后向下派送级联是没问题, 只有 ask 是不可以接受的。」
+
+落地(生产 config, 热读):
+| 键 | 语义 | 变更 |
+|---|---|---|
+| `preset_allow["cordis-router"]` | **子代侧** = baseline 豁免集 | 19 → 18 件(移出 `ask_user_question`) |
+| `main_preset_allow["cordis-router"]` | **主会话侧** = keep-only 正面清单 | 20 件(18 + ask + describe_tools) |
+
+★ 同一键两侧语义不同 ⇒ 必须双键拆(仓内既有的 `main_preset_allow` 机制), **未新增任何
+配置概念或 preset**。
+
+实测验收(`preset_dispatch(preset=cordis-router)` 派真实子会话): `explain_gate` 报
+「可见 21/97 | 裁 76 件」; `describe_tools` 查四件**只有 ask_user_question 带
+「不在你的工具面内」标记**; 可调用性 preset_dispatch ✓ / preset_send_message ✓ /
+dispatch_composed ✓ / ask ✗。
+★ 级联路径亦实测: 该子代用 `dispatch_composed(capabilities=["reader"])` **真实派出孙代**,
+台账三层链路完整(depth1 cordis-router 21 件 → depth2 composed 9 件)。
+
+### §③ 修: `describe_tools` 被自家闸门裁掉(锚 `be9e3b2`)
+
+★ v0.16.0 上线后实测坐实的机制缺口: `describe_tools` 是**全局层**新工具 ⇒ `syncLock`
+按设计建为 `state:"pending"`(全局层新名 ⇒ 自动闸门拦截)⇒ 进 deny 集 ⇒
+**普通 preset 子代被 dtg 自己的闸门裁掉**, 实测子代报 `Error: unknown tool "describe_tools"`
+⇒ §① 的设计意图在**普通 preset 子代**这条路径上失效(组装面走 keep-only allow 不受影响,
+故先前未暴露)。
+
+修法: 按面板「🔓 放行」裁决通道把该件 state 改 seen(与 host `rule()` 同口径, 不改闸门
+语义、不加新豁免机制)。落盘等价性: host 的 `rule()` 四步(clash 检查 / state=seen+ruledAt /
+writeLock 更新 updatedAt+删 anchorPending / 原子写 tmp→rename)在
+`scripts/rule-allow-tool.mjs` 中逐字复刻; 且 host 所有 writeLock 调用点都**先 readLock()**
+(无模块级缓存)⇒ 手工改盘不会被进程内存态覆盖。
+
+实测: 裁决后子代调用成功; canary C4 显示 cordis-sub 面 54 → 56; canary 期望值
+seen 127→128 由 `probe-p0-prodlock.mjs` 用真 syncLock 重算(非手改数字)⇒ C2 由红转绿。
+
+### §④ 探针判据三修 + 多帧 zstd 解码器(锚 `04ae551`)
+
+1. `probe-tool-returns` 判据写死「4 个工具」⇒ 改**集合覆盖**(v0.16.0 新增 describe_tools
+   后必然假红)。变异验证: 把 describe_tools 改回裸注册 ⇒ 报红 3 条 ⇒ 判据有判别力。
+2. 该探针**缺退出码** ⇒ 批量回归里红项不可见(实测变异体报 3 条红、exit 仍为 0)⇒ 补 `process.exit`。
+3. 新增 `scripts/zstd-frames.mjs`: 会话日志是**数千个 zstd 帧顺序拼接**(本会话 27.7MB /
+   17485 帧), 而 Node 的 `zstdDecompressSync` 与 `createZstdDecompress` **都只解第一帧**
+   (27.7MB → 198 字节)⇒ 直接扫日志会**静默漏掉 99.999% 的内容**(首版扫描器因此返
+   「命中 0 条」, 连我自己那条 publish 调用都扫不到)。本模块按 zstd 帧规范解析帧边界,
+   逐帧解压拼接(自测 17485 帧全解出, 8275 万字符)。
+
+### §⑤ 新用户框架文档 + 路线图 + 三套文档守门探针(锚 `be3d0fc`)
+
+- `docs/new-user-framework.md` —— 新用户第一入口(不读其它文档也能上手): 开箱架构全景
+  (Router–Worker 两层)、**发布态 3 个 preset** 的逐行工具面、两种派活方式 + 5 个能力
+  标签表、治理三层、三条边界、速查表、复核方式表。
+- `docs/roadmap.md` —— **尚未实现**的处理项登记处(7 条: 兄弟会话无直连 / 回执分层 /
+  上下文水位可见 / 能力标签 router 与 preset 面脱节 / 档 2 入口 / 双义彻底拆 / awesome),
+  每条含「问题(实测) / 为什么现在不做 / 要做动哪里 / 怎么验」, 并附「我方曾判断错」记录表。
+- 三套探针把文档数字绑到真值上: `probe-new-user-framework`(29 项)、
+  `probe-doc-packaging`(50 项)、`probe-baseline-sync`(9 项)。
+
+★ **发布态 ≠ 仓库态**: 发布导出有 core3 裁剪(T2.5, 只留 cordis-router / dtg-shell /
+cordis-sub)⇒ 新用户实际拿到 **3 个** preset, 仓库源码里的第 4 段(sci-lite)被整段切除。
+⇒ 三套新探针均按**发布态**断言。
+
+★ 本版同时修掉的真问题: 内置表注释「goal/schedule 6」实为 **8** 件 + 补「共 40 件」总账;
+`smoke-readme-facts` 文档表行数断言由写死 6 改为**从 package.json 实际份数推导**;
+`package.json` files 白名单补两份新文档。
+
+★ 本版我方自踩并修正的两坑(记在案):
+① 抽取 `DEFAULT_BASELINE` 的正则 `[A-Za-z0-9_]*` **漏了连字符** ⇒ 抽出 34 件(真值 40)
+⇒ 误判「蓝本差 6 件」并据此改了**本来就正确**的 `config.default.json`(已回滚);
+教训: 抽取正则的字符类必须覆盖命名空间里实际出现的全部标识符字符。
+② 文档初稿按**仓库态**写「随包 4 个 preset」⇒ 与真实发布态(3 个)不符。
+
+全量探针 + smoke 38 套全绿(逐个退出码复跑)。
+
 ## v0.16.0 (2026-11-15) —— 工具说明机制化 + 决策面压缩目录
 
 > 可校验锚: 源仓 commit `7934a51`(功能) + `839fd7b`/`e491cdd`/`ac53ac4`(标注初标三层时序缺陷逐层修复) + `2b78a13`(三层修复收口 + verify-track 判据修正 + 文档如实化) + `d2fe0ab`(MoA 盲审阻断批: P0 面板崩溃 + 6 项 P1 + 新增 client 渲染探针) + `3a10e19`(质量闸判据③ 动作词表→信息增益) + `20d3735`(说明长度纠正: 存储层不截断 + describe_tools) + `41453f3`(describe_tools 进执行面能力标签 + README/断言同步); 发布仓 tag `v0.16.0`。
@@ -229,6 +333,45 @@ M11 断言模型侧查询工具已注册; A7f 判据**精确化**为「apply 体
 (粗判据会把 `describe_tools` 的合法运行时采集误报成回归)。
 
 探针 61 pass / 0 fail(12 条变异通道); 全量 38 套全绿。
+
+### §⑩ 用户裁定纠正: `describe_tools` 进**编排面**(2026-11-15 12:5x)
+
+> 本节记于 v0.16.0 发布**之后**的补批(用户裁定), 故不在上方锚列表内 —— 锚只列已固化的 commit。
+
+**用户裁定(原话)**: 「describe_tools 应该进入的, 因为不知道工具是什么, 那么 router 就很难编排工具。」
+
+★ 本条**推翻**了我方先前的判断。先前判「编排面刻意不含 describe_tools」, 理由是
+「它们不执行工具, 给出全量说明只增加面与注意力」—— **该理由不成立**:
+派单方若看不到每件工具能干啥的**完整说明**, 就无法可靠地编排工具 ⇒ 编排面
+恰恰**更需要**这个查证入口(与执行面同源的需求, 不是例外)。
+
+★ 落地三处(生产 config, 热读 ⇒ 对之后创建的会话立即生效):
+| 位置 | 变更 | 语义 |
+|---|---|---|
+| `capabilities.router` | 19 → **20** 件(+`describe_tools`) | 组装面(编排者)拿到查证入口 |
+| `capabilities.orchestrator` | 4 → **5** 件(+`describe_tools`) | 同上 |
+| `main_preset_allow["cordis-router"]` | **新设** 20 件(19 旧名单 + `describe_tools`) | 拆双语义: 子代侧 `preset_allow`(豁免集)逐字不动, 主会话侧显式正面清单 |
+
+★ 第三处的必要性(实测坐实): `cordis-router` 主会话原先**回落到**共用键
+`preset_allow["cordis-router"]`(19 件 keep-only)⇒ **主会话的真 router 拿不到
+describe_tools** ⇒ 用户指出的问题在**最该修的那条路径**上确实存在。
+`resolveMainAllow` 的 `pick-first-valid` 语义使 `main_preset_allow` 一旦配齐即生效,
+且 `allowFallbacks()` 对账面板里该 preset 不再列为「双语义回落」。
+
+★ 实测验收(编排面):
+- `dispatch_composed(capabilities=["orchestrator"])` ⇒ 面 **allow=5**(含 describe_tools);
+  子代理两次调用成功: `keyword="search"` 返 **23 件**、具名查 2 件返 2 件,
+  且**含面外工具**(如 `generate_image`)并正确标「不在你的工具面内」;
+- 普通 preset 子代(cordis-sub)实测 `describe_tools` 调用成功、无参数时返 **122 件**;
+- `dispatch_composed(capabilities=["router"])` **被组装闸拒** —— 该标签含
+  `preset_dispatch`/`preset_send_message`/`ask_user_question` 三件 baseline_deny
+  ⇒ 治理底线正确生效(不是本次改动引入, 是 `router` 标签既有内容)。
+
+★ 机制要点: 说明台账是**全库**的(不限本面), 「可见」只作标注 ⇒ 编排面能查到
+面外工具的完整说明 ⇒ 「不知道工具是什么 ⇒ 难编排」这一缺口被真正堵住。
+
+★ 文档同步: README / README.zh.md 的「编排面刻意不含」段已改写为「所有标签均含」;
+`docs/tool-annotations.md` 的模型侧查询行同步; 源码注释记录本次裁定与理由。
 
 ## v0.15.2 (2026-11-14) —— explain_gate 域会话可见化 + 输出完整性修复
 

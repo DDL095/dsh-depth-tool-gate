@@ -276,7 +276,7 @@ Key notes:
   | `literature` | 23 | 15 |
   | `literature-lead` | 24 | 15 |
 
-  Execution tags carry `describe_tools` (a read-only lookup of every governed tool's one-line purpose), so a composed worker can check what a tool actually does before calling it. Orchestration tags (`router`, `orchestrator`) deliberately omit it: they dispatch rather than execute, and their selection input is the capability catalog, not per-tool descriptions.
+  Every tag carries `describe_tools` (a read-only lookup of every governed tool's one-line purpose), so a composed agent can check what a tool actually does before calling it — **including orchestration tags** (`router`, `orchestrator`): a dispatcher that cannot see what the tools do cannot compose them reliably, so it needs the same lookup entry point as an executor.
 
   The MCP-based tags name tools from MCP servers that only exist if you have those servers installed. Missing MCP tools are **dropped from the allow-list** (and counted as `droppedUnknown`), while the remaining built-in tools still apply — so `literature` degrades to its 7 non-MCP tools rather than to an empty surface. If your tool set differs, define your own tags.
 - An **unknown** capability tag is a hard error: the dispatch is rejected with `未知能力标签: <tag>` and the list of available tags. It does not silently fall back.
@@ -302,6 +302,9 @@ The briefs live **inside the installed package**, next to `role-briefs.mjs` — 
 | `cordis-sub` | a general-purpose subagent preset with a brief injected |
 | `cordis-router` | a dispatch-only main session preset: no execution tools, delegation only |
 
+> **Start here if you just installed this**: [New-user framework](docs/new-user-framework.md) —
+> what you got, who reports to whom, and how to dispatch work.
+
 ---
 
 ## Privacy
@@ -318,11 +321,14 @@ The briefs live **inside the installed package**, next to `role-briefs.mjs` — 
 
 | Document | What it covers |
 |---|---|
+| [New-user framework](docs/new-user-framework.md) | **start here** — the architecture you get after installing: roles, faces, dispatch paths, boundaries |
 | [Panel guide](docs/panel-guide.md) | every tab, field by field |
 | [Agent FAQ](docs/agent-faq.md) | how the mechanism works, from an agent's point of view |
 | [Troubleshooting](docs/troubleshooting.md) | silent-degradation family first: what to check, in what order |
 | [Audit schema](docs/audit-schema.md) | every field of the ledger and the lock file |
 | [Tool annotations](docs/tool-annotations.md) | what each governed tool is, and why it is governed |
+| [Preset policy](docs/preset-policy.md) | the two-list governance model and the per-preset keys |
+| [Roadmap](docs/roadmap.md) | **not implemented yet** — open items with the evidence behind each |
 | [Changelog](versions.md) | release history |
 
 ---
@@ -340,7 +346,7 @@ node scripts/probe-save-runtime.mjs                    # save() runtime probe
 node scripts/release-export.mjs                        # build + assert the release snapshot
 ```
 
-Release notes are in [versions.md](versions.md). The package ships the runtime, the client half, the locale files, the bundle patch, the role briefs, the five `docs/` guides listed above, the diagrams and the changelog.
+Release notes are in [versions.md](versions.md). The package ships the runtime, the client half, the locale files, the bundle patch, the role briefs, the `docs/` guides listed above, the diagrams and the changelog.
 
 Development-only assets — surgery scripts, archaeology notes, the internal release manual — live under `internal/` in the repository and are **not published** in the npm package.
 
