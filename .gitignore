@@ -1,3 +1,6 @@
 node_modules/
 *.log
 .DS_Store
+# npm 打包产物(每个版本一个 tgz): 属**发布流水线中间物**, 不进版本库
+# (发布仓 = 发布物源码; tgz 由 release-export + npm pack 现场生成, 见 versions.md 发布链)
+*.tgz

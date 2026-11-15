@@ -32,7 +32,7 @@ A DSH subagent inherits the main session's entire tool catalog and the full glob
 
 | | Without a gate | With dsh-depth-tool-gate |
 |---|---|---|
-| **Tool catalog** | Every subagent inherits the host's full global tool set — measured at 90 tools ≈ 33k tokens of schemas, re-sent every turn (measured on DSH 0.2.2-rc.1) | Each agent sees only what its role needs — the `reader` capability tag resolves to 8 tools, i.e. ≈29k tokens less per turn |
+| **Tool catalog** | Every subagent inherits the host's full global tool set — measured at 90 tools ≈ 33k tokens of schemas, re-sent every turn (measured on DSH 0.2.2-rc.1) | Each agent sees only what its role needs — the `reader` capability tag resolves to 9 tools, i.e. ≈29k tokens less per turn |
 | **New tools appearing** | A DSH upgrade or a newly installed plugin silently widens every subagent's surface | New tool names are held in a **pending gate** and blocked until you rule on them |
 | **Prompt budget** | Subagents inherit the full global instruction file (tens of KB) plus injected sections about tools they do not have | Per-role briefs replace the bulk of it (1.8–3.4 KB in the shipped presets), and sections about absent tools are masked out (≈4.4 KB of dead sections dropped, measured with `provenance_audit`) |
 | **Wasted capability** | A subagent holds "restart the whole system" or "install software" next to "read a file" | Dangerous and irrelevant tools are denied by name, per role |
@@ -270,11 +270,13 @@ Key notes:
 
   | Tag | Tools | Of those, MCP tools |
   |---|---|---|
-  | `reader` | 8 | 0 |
-  | `reader-lead` | 9 | 0 |
-  | `ocr` | 9 | 2 |
-  | `literature` | 22 | 15 |
-  | `literature-lead` | 23 | 15 |
+  | `reader` | 9 | 0 |
+  | `reader-lead` | 10 | 0 |
+  | `ocr` | 10 | 2 |
+  | `literature` | 23 | 15 |
+  | `literature-lead` | 24 | 15 |
+
+  Execution tags carry `describe_tools` (a read-only lookup of every governed tool's one-line purpose), so a composed worker can check what a tool actually does before calling it. Orchestration tags (`router`, `orchestrator`) deliberately omit it: they dispatch rather than execute, and their selection input is the capability catalog, not per-tool descriptions.
 
   The MCP-based tags name tools from MCP servers that only exist if you have those servers installed. Missing MCP tools are **dropped from the allow-list** (and counted as `droppedUnknown`), while the remaining built-in tools still apply — so `literature` degrades to its 7 non-MCP tools rather than to an empty surface. If your tool set differs, define your own tags.
 - An **unknown** capability tag is a hard error: the dispatch is rejected with `未知能力标签: <tag>` and the list of available tags. It does not silently fall back.

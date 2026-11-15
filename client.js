@@ -341,6 +341,8 @@ window.__ModuleLoader__.load({
 			const [newCap, setNewCap] = React.useState("");   /* [v0.5] Tab5 新增标签名 */
 			/* [v0.9] Tab-usage: 频率统计 */
 			const [usage, setUsage] = React.useState(null);
+			/* [v0.16.0 §1] Tab-annot: 标注台账(说明 + 待标注队列) */
+			const [annotData, setAnnotData] = React.useState(null);
 			/* [v0.10] 折叠态(localStorage 持久化) + 解读提示词弹层 */
 			const [fold, setFold] = React.useState(loadFold);
 			const toggleFold = (k) => setFold((f) => { const n = { ...f, [k]: !f[k] }; try { localStorage.setItem(FOLD_KEY, JSON.stringify(n)); } catch { /* noop */ } return n; });
@@ -352,6 +354,24 @@ window.__ModuleLoader__.load({
 			const loadUsage = React.useCallback(() => {
 				callGate("usageStats").then((r) => { const d = unwrap(r); setUsage(d && d.ok ? d : { ok: false, error: (d && d.error) || "不可用" }); }).catch((e) => setUsage({ ok: false, error: String((e && e.message) || e) }));
 			}, [callGate]);
+			/* [v0.16.0 §2] 决策面能力标签目录 */
+			const [catalogData, setCatalogData] = React.useState(null);
+			const loadCatalog = React.useCallback(() => {
+				callGate("capabilityCatalog").then((r) => { const d = unwrap(r); setCatalogData(d && d.ok ? d : { ok: false, error: (d && d.error) || "不可用" }); }).catch((e) => setCatalogData({ ok: false, error: String((e && e.message) || e) }));
+			}, [callGate]);
+			/* [v0.16.0 §1] 标注台账的加载与人工标注。
+			 * ★ 人工标注**即时生效**(host 侧写台账并更新内存缓存)⇒ 存完即可刷新看到,
+			 *   无需重启、不需重建 agent(标注只影响「说明」, 不影响裁剪)。 */
+			const loadAnnot = React.useCallback(() => {
+				callGate("annotationsInfo").then((r) => { const d = unwrap(r); setAnnotData(d && d.ok ? d : { ok: false, error: (d && d.error) || "不可用" }); }).catch((e) => setAnnotData({ ok: false, error: String((e && e.message) || e) }));
+			}, [callGate]);
+			const saveAnnot = React.useCallback((name, note) => {
+				callGate("annotate", { name, note }).then((r) => {
+					const d = unwrap(r);
+					if (d && d.ok) { setMsg("✅ 已保存说明"); loadAnnot(); }
+					else setMsg("❌ 保存失败: " + ((d && d.error) || "未知错误"));
+				}).catch((e) => setMsg("❌ 保存失败: " + String((e && e.message) || e)));
+			}, [callGate, loadAnnot]);
 
 			const load = React.useCallback(() => {
 				setMsg("加载中…");
@@ -385,6 +405,10 @@ window.__ModuleLoader__.load({
 				listPresets().then(setPresets).catch((e) => setPresetError("角色注册表加载失败(仍可用已有/手动 ID): " + String((e && e.message) || e)));
 			}, [callGate, listPresets]);
 			React.useEffect(() => { load(); }, [load]);
+			/* [v0.16.0 §1] 标注页签: 打开即拉(不预取, 避免每次开面板都多一次网关往返)。 */
+			React.useEffect(() => { if (tab === "annot") loadAnnot(); }, [tab, loadAnnot]);
+			/* [v0.16.0 §2] 能力标签页签: 打开即拉目录(同源热生效)。 */
+			React.useEffect(() => { if (tab === "caps") loadCatalog(); }, [tab, loadCatalog]);
 
 			const denySet = new Set(draft ? draft.baseline_deny : []);
 			const mainDenySet = new Set(draft ? draft.main_deny : []);
@@ -471,6 +495,48 @@ window.__ModuleLoader__.load({
 			if (!data || !draft) return h("div", { style: { padding: 12, opacity: 0.7 } }, msg || "加载中…");
 			const th = { padding: "6px 10px", fontSize: 12, textAlign: "left", opacity: 0.8 };
 			const td = { padding: "5px 10px", fontSize: 12, verticalAlign: "top" };
+			/* [v0.16.0 §1] 标注页签的两个行渲染器。
+			 * ★★ 必须定义在**组件体内**(此处)—— 不是模块作用域!
+			 *   缺陷(MoA 盲审 P0 实测复现): 初版把这两个函数定义在 GatePanel **之外**,
+			 *   却引用了组件内的闭包变量 busy / saveAnnot / td ⇒ 渲染期抛
+			 *   "busy is not defined" ⇒ 「工具说明」页签 100% 不可用(头号新功能报废),
+			 *   而 37 套探针全绿(探针不触碰 client 渲染路径 ⇒ 系统性假绿)。
+			 *   ⇒ 位置即契约: 引用组件内状态的渲染器必须定义在组件内。
+			 *   (当初为避开深层嵌套的括号层级事故才提到外层 —— 那是**引入缺陷**的手法,
+			 *    正确做法是独立成函数 + 定义在组件内, 两者不冲突。) */
+			const renderAnnotNeedRow = (r) => h("div", { key: r.name, style: { borderTop: "1px solid rgba(128,128,128,.15)", padding: "5px 0" } },
+				h("div", { style: { display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" } },
+					h("code", { style: { fontSize: 11 } }, r.name),
+					h("span", { style: { fontSize: 10, color: r.quality === "missing" ? "#c66" : "#e8a33d" } }, r.quality === "missing" ? "✗ 无说明" : "△ 过于简略"),
+					h("span", { style: { fontSize: 10, opacity: 0.6 } }, r.source === "manual" ? "(人工)" : "(自动初标)"),
+					!r.runtime ? h("span", { style: { fontSize: 10, opacity: 0.55 } }, "· 运行时不可见") : null),
+				h("div", { style: { fontSize: 11, opacity: 0.7, margin: "2px 0" } }, r.note ? "现: " + r.summary : "现: (无)"),
+				h("div", { style: { display: "flex", gap: 6, marginTop: 3 } },
+					h("input", {
+						/* ★ 编辑框用**完整说明**(存储层), 不用短摘要 ——
+						 *   人工补写必须看到全貌才能改对(短摘要把关键维度砍掉了)。 */
+						defaultValue: r.note || "",
+						placeholder: "写一句用途(例: 派单到平级子会话并带回最终回复)",
+						onKeyDown: (e) => { if (e.key === "Enter") { e.preventDefault(); saveAnnot(r.name, e.target.value); } },
+						style: { flex: 1, padding: "3px 6px", fontSize: 11, background: "rgba(0,0,0,.15)", color: "inherit", border: "1px solid rgba(128,128,128,.3)", borderRadius: 3 },
+					}),
+					/* ★ 「💾 存」必须取**输入框的值**, 不能取事件目标的值:
+					 *   button 元素的 value 是空串 ⇒ 原写法 e.target.value 恒为 ""
+					 *   ⇒ saveAnnot(name, "") 走**清除**分支(把人工标注删掉)而非保存。
+					 *   (MoA 盲审 P1 实测指出, 原被 P0 崩溃掩盖; 修 P0 后立即显形。) */
+					h("button", { disabled: busy, onClick: (e) => saveAnnot(r.name, e.currentTarget.parentNode.querySelector("input")?.value ?? ""), style: { fontSize: 11, padding: "2px 10px", cursor: "pointer" } }, "💾 存"),
+					h("button", { disabled: busy, onClick: () => saveAnnot(r.name, ""), title: "清除人工标注, 回落自动初标", style: { fontSize: 11, padding: "2px 8px", cursor: "pointer" } }, "↺ 回落自动")));
+			const renderAnnotRow = (r) => h("tr", { key: r.name, style: { borderTop: "1px solid rgba(128,128,128,.15)" } },
+				h("td", { style: { ...td, fontFamily: "monospace", fontSize: 11 } }, r.name),
+				/* ★ 列表用**短摘要**(一行可扫); 悬停/点开看**完整说明** ——
+				 *   完整说明才是权威(存储层不截断), 摘要是显示层派生。 */
+				h("td", { style: { ...td, fontSize: 11, whiteSpace: "normal", opacity: 0.8 }, title: r.note || "" },
+					r.note ? (r.summary || r.note) : h("span", { style: { color: "#c66" } }, "(无说明)")),
+				h("td", { style: { ...td, fontSize: 10, opacity: 0.65 } }, r.source === "manual" ? "人工" : "自动"),
+				h("td", { style: { ...td, fontSize: 10 } },
+					r.quality === "ok" ? h("span", { style: { color: "#7c8" } }, "✓ 达标")
+						: r.quality === "thin" ? h("span", { style: { color: "#e8a33d" } }, "△ 简略")
+							: h("span", { style: { color: "#c66" } }, "✗ 缺")));
 			const groupMembers = (g) => g.names || (draft.baseline_deny.concat(data.default_baseline || []).filter((n) => g.prefix && n.startsWith(g.prefix)));
 			/* [v0.15 P1b] 当前生效的分组: host 自动分组优先, 硬编码表仅回退。
 			 * ★ 单一取值点: 后面所有分组引用都用它, 不再散落引用硬编码表
@@ -566,7 +632,13 @@ window.__ModuleLoader__.load({
 				const activeSet = forPreset ? effectiveDenySet : denySet;
 				const tableGroups = forPreset ? presetGroups : groups;
 				const extra1 = draft.baseline_deny.filter((n) => !groupedNames.has(n));
-				const shown = extra1.length && !forPreset ? tableGroups.concat({ key: "_cfg_extra", title: `➕ 配置内未分组(${extra1.length})`, names: extra1, note: "baseline_deny 中不属于任何固定分组的条目" }) : groups;
+				/* ★ [v0.16.0 MoA 盲审 P1 修] else 分支必须用 **tableGroups**, 不是 groups。
+				 *   缺陷: forPreset=true(preset 页)时, 原写法落到外层 `groups`
+				 *   ⇒ 丢掉了 presetGroups 的「➕ 其他额外禁用」兜底组
+				 *   ⇒ 该角色 extra_deny 加入、未归入固定分组的工具**整组不渲染**
+				 *   ⇒ 用户在 preset 页看不到那些件的禁用状态(状态不可见 = 不可解释)。
+				 *   (probe-client-groups 的 C3 只查「无裸 GROUPS 引用」, 对本项零判别力。) */
+				const shown = extra1.length && !forPreset ? tableGroups.concat({ key: "_cfg_extra", title: `➕ 配置内未分组(${extra1.length})`, names: extra1, note: "baseline_deny 中不属于任何固定分组的条目" }) : tableGroups;
 				return h("table", { style: { borderCollapse: "collapse", width: "100%" } },
 					h("thead", null, h("tr", null,
 						h("th", { style: th }, "组"), h("th", { style: th }, "禁用"), h("th", { style: th }, "名单(配置清单)"), h("th", { style: th }, "理由"))),
@@ -661,7 +733,7 @@ window.__ModuleLoader__.load({
 					msg ? h("span", { style: { fontSize: 12, color: msg.startsWith("✅") ? "#6a6" : "#c66" } }, msg) : null),
 				/* Tab 页 */
 				h("div", { style: { display: "flex", gap: 4, marginBottom: 8, borderBottom: "1px solid rgba(128,128,128,.3)" } },
-					[["groups", "📋 全局工具面"], ["main", "🧭 主会话与访问"], ["preset", "👥 子代理按角色"], ["caps", "🧪 能力标签"], ["usage", "📊 调用频率"], ["audit", "📜 裁剪台账"], ["gate", "🚦 闸门与发现"]].map(([k, label]) =>
+					[["groups", "📋 全局工具面"], ["main", "🧭 主会话与访问"], ["preset", "👥 子代理按角色"], ["caps", "🧪 能力标签"], ["annot", "📝 工具说明"], ["usage", "📊 调用频率"], ["audit", "📜 裁剪台账"], ["gate", "🚦 闸门与发现"]].map(([k, label]) =>
 						h("button", { key: k, onClick: () => setTab(k), style: { padding: "5px 12px", fontSize: 12, cursor: "pointer", border: "none", borderBottom: tab === k ? "2px solid #6af" : "2px solid transparent", background: "transparent", color: "inherit", opacity: tab === k ? 1 : 0.6 } }, label))),
 
 				/* ── Tab1 [v0.10]: 双栏可折叠(上=已禁用配置, 下=未裁决快照) + 层级图例 ── */
@@ -855,6 +927,21 @@ window.__ModuleLoader__.load({
 							h("span", { style: { fontSize: 12 } }, `当前来源: ${capsCustom ? "自定义表(config.capabilities, 整体覆盖内置)" : "内置缺省(DEFAULT_CAPABILITIES)"} · ${Object.keys(capsDisplay).length} 个标签`),
 							capsCustom || draft?.capabilities === null ? h("button", { onClick: () => setDraft((d) => ({ ...d, capabilities: null })), title: "保存后清掉 config 键, 恢复随插件内置标签", style: { padding: "3px 10px", fontSize: 11, cursor: "pointer" } }, "↺ 恢复内置(待保存)") : null),
 						h("div", { style: { marginTop: 4, fontSize: 11, opacity: 0.75 } }, "⚠ 保存自定义表后整体覆盖内置(未来插件新增标签不再自动出现; 恢复内置可回退)。名单含 dispatch_composed 的标签(lead 系)=子代可再派一级孙代。")),
+					/* [v0.16.0 §2] 决策面目录(实际注入 brief 的那份)—— 让用户看见
+					 * 「决策面到底知道哪些能力」, 并给出体积账(对比工具 schema 的代价)。 */
+					h("details", { style: { marginBottom: 10 } },
+						h("summary", { style: { cursor: "pointer", fontSize: 12, opacity: 0.8 } },
+							`📇 决策面目录${catalogData && catalogData.ok ? `(${catalogData.bytes}B · ${catalogData.tags.length} 标签 · 覆盖 ${catalogData.toolCount} 件工具)` : ""}`),
+						h("p", { style: { fontSize: 11, opacity: 0.7, margin: "4px 0" } },
+							"路由者(router)等决策面**不携带全量工具 schema**, 改为携带这份紧凑目录 —— " +
+							"它知道「能派哪些能力、每个能干什么」, 真正执行的面由 worker 带完整 schema。",
+							h("b", null, "实测"), ": router 面 19 件工具的 schema = 21,029B; 本目录 = ",
+							catalogData && catalogData.ok ? String(catalogData.bytes) : "?", "B。"),
+						h("button", { onClick: loadCatalog, style: { padding: "3px 10px", fontSize: 11, cursor: "pointer", marginRight: 6 } }, "↻ 刷新"),
+						h("button", { onClick: () => { if (catalogData && catalogData.text) copyText(catalogData.text, null, setMsg); }, style: { padding: "3px 10px", fontSize: 11, cursor: "pointer" } }, "📋 复制"),
+						catalogData && catalogData.ok
+							? h("pre", { style: { marginTop: 6, padding: 8, fontSize: 11, background: "rgba(0,0,0,.2)", borderRadius: 4, overflow: "auto", maxHeight: 260, whiteSpace: "pre-wrap", fontFamily: "monospace" } }, catalogData.text)
+							: h("div", { style: { fontSize: 11, opacity: 0.6, marginTop: 4 } }, catalogData ? "不可用: " + (catalogData.error || "未知") : "未加载")),
 					Object.entries(capsDisplay).map(([name, list]) => h("div", { key: name, style: { border: "1px solid rgba(128,128,128,.25)", borderRadius: 6, padding: 8, marginBottom: 8 } },
 						h("div", { style: { display: "flex", alignItems: "center", gap: 8, marginBottom: 4 } },
 							h("b", { style: { fontSize: 12 } }, name),
@@ -1015,6 +1102,36 @@ window.__ModuleLoader__.load({
 							h("summary", { style: { cursor: "pointer", fontSize: 12, opacity: 0.75 } }, "lock 原始 JSON"),
 							h("textarea", { readOnly: true, value: JSON.stringify(lock.lock, null, 1), style: { width: "100%", minHeight: 200, fontFamily: "monospace", fontSize: 11, padding: 6, boxSizing: "border-box" } })))) :
 					h("div", { style: { opacity: 0.6, fontSize: 12 } }, "lock 不可用(插件为旧版或读取失败)")),
+				/* ── [v0.16.0 §1] Tab📝 工具说明: 逐件用途说明 + 待标注队列 ──
+				 * 数据源 = host 的标注台账(运行时 definition 自动初标 + 人工补写);
+				 * 「良好说明」的判据是**可执行的四条闸**(非主观打分), 面板如实展示。 */
+				tab === "annot" && h("div", null,
+					h("p", { style: { fontSize: 12, opacity: 0.75 } },
+						"每件工具一句话说明用途。工具被【发现】时自动从其运行时描述生成初标; ",
+						h("b", null, "人工补写优先且不会被自动覆盖"), "。说明不达闸的进待标注队列。文件: ",
+						h("code", null, annotData?.path || "")),
+					annotData && !annotData.ok ? h("div", { style: { color: "#c66", fontSize: 12 } }, "不可用: " + annotData.error) :
+					annotData ? h("div", null,
+						h("div", { style: { display: "flex", gap: 14, alignItems: "center", margin: "6px 0 10px", flexWrap: "wrap" } },
+							h("span", { style: { fontSize: 12 } }, h("b", null, `共 ${annotData.counts.total} 件`)),
+							h("span", { style: { fontSize: 12, color: "#7c8" } }, `✓ 达标 ${annotData.counts.ok}`),
+							h("span", { style: { fontSize: 12, color: "#e8a33d" } }, `△ 待补 ${annotData.counts.thin}`),
+							h("span", { style: { fontSize: 12, color: "#c66" } }, `✗ 缺说明 ${annotData.counts.missing}`),
+							h("span", { style: { fontSize: 11, opacity: 0.65 } }, `人工 ${annotData.counts.manual} · 自动 ${annotData.counts.auto} · 运行时不可见 ${annotData.counts.stale}`),
+							h("button", { onClick: loadAnnot, style: { padding: "3px 10px", fontSize: 11, cursor: "pointer" } }, "↻ 刷新")),
+						h("p", { style: { fontSize: 11, opacity: 0.6, margin: "0 0 8px" } },
+							`达标判据(四条全过): 非空 · ≥${annotData.gate?.minBytes ?? 12} 字节 · 不是把工具名重念一遍 · 含动作性(说明干了什么事)。`),
+						(annotData.need || []).length > 0
+							? h("details", { open: true, style: { marginBottom: 12 } },
+								h("summary", { style: { cursor: "pointer", fontSize: 12 } }, `⚠ 待标注 ${annotData.need.length} 件(不达闸: 需要人工补一句)`),
+								h("div", null, annotData.need.map((r) => renderAnnotNeedRow(r))))
+							: null,
+						h("details", { open: true },
+							h("summary", { style: { cursor: "pointer", fontSize: 12 } }, `📚 全量说明(${annotData.rows.length} 件)`),
+							h("table", { style: { borderCollapse: "collapse", width: "100%", marginTop: 4 } },
+								h("thead", null, h("tr", null, ["工具", "说明", "来源", "状态"].map((c) => h("th", { key: c, style: th }, c)))),
+								h("tbody", null, annotData.rows.map((r) => renderAnnotRow(r))))))
+						: null),
 				/* [v0.10] 解读提示词弹层(跨 Tab 常驻, 就地展开) */
 				promptBox && h("div", { style: { marginTop: 10, border: "1px solid rgba(106,170,255,.3)", borderRadius: 6, padding: 8, background: "rgba(106,170,255,.06)" } },
 					h("div", { style: { display: "flex", alignItems: "center", gap: 8, marginBottom: 4 } },
@@ -1041,6 +1158,9 @@ window.__ModuleLoader__.load({
 					{ id: "depthToolGate/rule", service: "depthToolGateGw", namespace: "depthToolGate", method: "rule", invocation: { kind: "direct" }, parameters: [param("names"), param("action")], result: resultOf("rule") },
 					{ id: "depthToolGate/lockInfo", service: "depthToolGateGw", namespace: "depthToolGate", method: "lockInfo", invocation: { kind: "direct" }, parameters: [], result: resultOf("lockInfo") },
 					{ id: "depthToolGate/usageStats", service: "depthToolGateGw", namespace: "depthToolGate", method: "usageStats", invocation: { kind: "direct" }, parameters: [], result: resultOf("usageStats") },
+					{ id: "depthToolGate/annotationsInfo", service: "depthToolGateGw", namespace: "depthToolGate", method: "annotationsInfo", invocation: { kind: "direct" }, parameters: [param("topN")], result: resultOf("annotationsInfo") },
+					{ id: "depthToolGate/annotate", service: "depthToolGateGw", namespace: "depthToolGate", method: "annotate", invocation: { kind: "direct" }, parameters: [param("name"), param("note")], result: resultOf("annotate") },
+					{ id: "depthToolGate/capabilityCatalog", service: "depthToolGateGw", namespace: "depthToolGate", method: "capabilityCatalog", invocation: { kind: "direct" }, parameters: [], result: resultOf("capabilityCatalog") },
 				],
 			});
 			/* typert direct 调用返回信封 {ok,value}; 剥一层 + 兼容已剥形状 */
@@ -1062,6 +1182,9 @@ window.__ModuleLoader__.load({
 				if (op === "rule") return withTimeout(svc.rule(arg?.names, arg?.action)).then(unwrap);
 				if (op === "lockInfo") return withTimeout(svc.lockInfo()).then(unwrap);
 				if (op === "usageStats") return withTimeout(svc.usageStats()).then(unwrap);
+				if (op === "annotationsInfo") return withTimeout(svc.annotationsInfo(arg?.topN)).then(unwrap);
+				if (op === "annotate") return withTimeout(svc.annotate(arg?.name, arg?.note)).then(unwrap);
+				if (op === "capabilityCatalog") return withTimeout(svc.capabilityCatalog()).then(unwrap);
 				throw new Error("未知 op: " + String(op));
 			};
 			const slots = ctx.slots;

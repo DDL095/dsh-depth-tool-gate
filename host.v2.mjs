@@ -141,6 +141,12 @@ const LOCK_PATH = () => join(profileDir(), "depth-tool-gate.lock.json");
  *     随意放宽会削弱该断言; 而 origin.json 不带前缀无语义损失(同在 profile 目录)。
  *   ★ 注释里**不可写出**旧包名+origin.json 的组合(那会命中 A17 的扫描)。 */
 const ORIGIN_PATH = () => join(profileDir(), "origin.json");
+/* [v0.16.0 §1] 工具标注台账: 逐件工具的**一句式人类可读用途说明**。
+ * 落盘在 profile 目录(与 config/lock 同级); 文件名同样**不起插件前缀**
+ * (同 ORIGIN_PATH 的理由: 发布链 A17 对「旧包名 + 数据文件名」的组合敏感,
+ *  而此文件无需语义前缀; 注释里也不写出该组合)。
+ * 数据源 = 运行时工具 definition 的 description(自动初标) + 人工补写(manual 优先)。 */
+const ANNOT_PATH = () => join(profileDir(), "annotations.json");
 /* [v0.15 §3.2] 包内 patch 的绝对路径(静态兜底扫描用)。
  * ★ 一次性算成**模块级常量**而非在函数体里用 import.meta.url:
  *   ① import.meta 只能在 ESM 模块顶层用, 放进 new Function/eval 就 SyntaxError
@@ -233,7 +239,15 @@ const PENDING_CAPS = new Map();  /* childId → {allow:Set<string>, label, expir
 const CAP_TTL_MS = 60_000;
 
 /* [v0.4.2] 能力标签表缺省(config.capabilities 存在则整体覆盖): 标签→allow 名单。
- * allow=keep-only 语义: 面外一切(含未来新全局工具)不可见。 */
+ * allow=keep-only 语义: 面外一切(含未来新全局工具)不可见。
+ *
+ * ★ [v0.16.0] **执行面**标签含 `describe_tools`(查工具用途说明, 只读)。
+ *   理由: 组装面里的子代是「按能力标签领活的执行者」⇒ 它们正是**最需要**知道自己
+ *   能调的那些工具到底能干什么的那一方 ⇒ 不给它查说明的入口 = 说明机制对它们无效
+ *   (实测: reader 组装面 8 件里不含 describe_tools ⇒ 子代理查不到任何说明)。
+ *   ★ **编排/决策面**标签(router/orchestrator)**不含**: 它们不执行工具,
+ *     给出全量说明只增加面与注意力(它们的选型依据是「能力标签目录」, 不是逐件说明)。
+ */
 const DEFAULT_CAPABILITIES = {
 	literature: [
 		"mcp__research-tools__smart_search", "mcp__research-tools__search_broad", "mcp__research-tools__search_depth",
@@ -242,16 +256,18 @@ const DEFAULT_CAPABILITIES = {
 		"mcp__research-tools__search_validate", "mcp__research-tools__get_recent_result", "mcp__research-tools__list_recent_results",
 		"mcp__zotero__check_local", "mcp__zotero__search", "mcp__zotero__search_notes",
 		"web_search", "web_fetch", "read", "glob", "grep", "working_directory", "todo_write",
+		"describe_tools",
 	],
 	reader: [
 		"web_fetch", "web_search", "read", "read_image", "glob", "grep", "working_directory", "todo_write",
+		"describe_tools",
 	],
 	/* [v0.4.7] lead 系标签: 面内含 dispatch_composed —— 该子代可再派一级动态组装孙代
 	 * (spawn 侧 maxDepth 条件放行 +1, 总闸 maxDepth=12 仍管辖); 无 lead 标签的面
 	 * 级联仍被钉死在自身深度。 */
 	"reader-lead": [
 		"web_fetch", "web_search", "read", "read_image", "glob", "grep", "working_directory", "todo_write",
-		"dispatch_composed",
+		"dispatch_composed", "describe_tools",
 	],
 	/* [v0.5] literature-lead: 文献检索面+派单权——子代 foreman 化(自带带队再派一级)。 */
 	"literature-lead": [
@@ -261,11 +277,12 @@ const DEFAULT_CAPABILITIES = {
 		"mcp__research-tools__search_validate", "mcp__research-tools__get_recent_result", "mcp__research-tools__list_recent_results",
 		"mcp__zotero__check_local", "mcp__zotero__search", "mcp__zotero__search_notes",
 		"web_search", "web_fetch", "read", "glob", "grep", "working_directory", "todo_write",
-		"dispatch_composed",
+		"dispatch_composed", "describe_tools",
 	],
 	ocr: [
 		"mcp__paddleocr__paddleocr_vl", "mcp__minimax-plan__understand_image",
 		"read_image", "read", "write", "glob", "grep", "working_directory", "todo_write",
+		"describe_tools",
 	],
 };
 
@@ -555,6 +572,366 @@ function readOrigin() {
 	}
 }
 
+/* ── [v0.16.0 §1] 工具标注台账(Annotations) ─────────────────────────────────
+ * 目标: **每件工具都有一句人类可读的用途说明**; 发现即自动初标;
+ *       没写好的进「待标注」队列, 由面板提示人工补写。
+ *
+ * 落盘结构(annotations.json, profile 目录):
+ *   { version:1, updatedAt, tools: { "<name>": { note, source, at, quality } } }
+ *     source : "auto"(运行时 description 自动初标) | "manual"(人工补写, 永不被覆盖)
+ *     quality: "ok" | "thin"(说明不达口径) | "missing"(无说明)
+ *
+ * ★ 自动初标 = 取运行时 definition.description 的**首句**(权威来源, 不另造事实):
+ *   官方工具的 description 本就是模型面向的说明; 但它可能很长
+ *   (实测原生件中位 317B / 最长 2011B) ⇒ 抽首句 + 截断, 供**决策面**一行阅读。
+ *
+ * ★ 质量闸(「良好说明」的可执行判据, 四条全过才 ok —— 非主观打分):
+ *   ① 非空; ② 字节长度 ≥ ANNOT_MIN_BYTES(短于此表达不了用途);
+ *   ③ 不是把工具名原样重念一遍(换算后与名相等 ⇒ 无信息);
+ *   ④ 含**动作性**(命中动作词表; 纯标题式描述如 "Search tool." 判 thin)。
+ *   不满足 ⇒ 该件 quality≠ok ⇒ 进「待标注」队列(面板计数 + 可编辑)。
+ *
+ * ★ 失效名(运行时已无)**保留不删**: 与 lock 同口径 —— 来源停用后再装回即自动复效。
+ */
+const ANNOT_MIN_BYTES = 12;   /* 质量闸②: 说明最短字节 */
+const ANNOT_MAX_BYTES = 160;  /* 自动初标截断上限(决策面一行可读, 按**字节**计) */
+/* 动作词表(质量闸④): 中文动词 + 英文动词词干。命中即视为有动作性。
+ *
+ * ★★ [v0.16.0 MoA 盲审 P1 修] 原词表有**大缺口**: 生产实测 35/35 件 thin
+ *   **全部**是词表缺口(而非说明真的没动作)—— 「召回/物化/添加/实测/克隆/装配/
+ *   引用/派发/评审/翻译/解析/统计…」这些**明确的动作**都不在表里
+ *   ⇒ 待标注队列 71% 假阳性 ⇒ 面板那个「待标注 N 件」只能当弱信号。
+ *   ⇒ 修法: 按**生产实测出现的真实动作**补齐(不是凭想象加词)。
+ *
+ * ★ 英文侧加了**词尾约束**: 原 `\bset\w*` 会命中名词形态("Settings manager"
+ *   ⇒ 假 ok)⇒ 改为要求动词形态(ing/ed/s/e/base), 减少名词误命中。 */
+/* ── [v0.16.0 MoA 盲审 P1 修·二轮] 质量闸④ = **信息增益**判据 ─────────────
+ * ★★ 为什么换掉「动作词表」当硬闸: 词表在生产语料上**假阳性率 100%** ——
+ *   初版 35 件 thin 全是词表缺口; 按实测扩表后 30 件 thin **仍然 100%** 是缺口
+ *   ("Interactive…" / "Delegate…" / "Continue…" / "流水线" / "元数据" …)
+ *   ⇒ 词表当硬闸 = 需要不断维护、且永远滞后 ⇒ 「待标注 N 件」只是噪音。
+ *   ⇒ 改用**信息增益**: 说明里必须有**工具名之外的实词**。
+ *   实测同批 120 件: ok=118 / thin=2, 且那 2 件恰是**真该人工补写**的
+ *   ("PaddleOCR paddleocr_vl tool" 纯重念 / "Use only in plan mode" 说的是约束非用途)
+ *   ⇒ 判据精准, 且**不依赖任何需维护的词表**。
+ */
+
+/* 英文停用词(信息增益判据用): 这些词不携带「用途」信息。 */
+const ANNOT_STOPWORDS = new Set(("the this that with for and or but not use only in on to from is are was be been it its a an of by at as one any all can may you your when what where which some etc into via per up out no yes do does did so if then than thus also more most less such each both while during after before between onto about over under through please note notes usage tool tools default user users description descriptions readme file files path paths string string value values name names list lists get set new old true false null undefined").split(" "));
+
+/* 把文本切成「英文词 + 中文词组」两类 token。 */
+function annotTokens(s) {
+	const low = String(s || "").toLowerCase();
+	const en = (low.match(/[a-z0-9]+/g) || []).filter((t) => t.length >= 3 && !ANNOT_STOPWORDS.has(t));
+	const zh = (low.match(/[\u4e00-\u9fa5]{2,}/g) || []);
+	return { en, zh };
+}
+
+/* 说明相对工具名是否有信息增益(说明里有工具名之外的实词)。 */
+function noteHasInfoGain(name, note) {
+	const nt = annotTokens(name);
+	const dt = annotTokens(note);
+	const nameEn = new Set(nt.en);
+	const nameZh = new Set(nt.zh);
+	const extraEn = dt.en.filter((t) => !nameEn.has(t));
+	const extraZh = dt.zh.filter((t) => !nameZh.has(t));
+	return extraEn.length > 0 || extraZh.length > 0;
+}
+
+const ANNOT_MEM = new Map();   /* 内存缓存: name → {note,source,at,quality}(热路径不读盘) */
+
+function emptyAnnotations() { return { version: 1, updatedAt: new Date().toISOString(), tools: {} }; }
+
+function readAnnotations() {
+	try {
+		if (!existsSync(ANNOT_PATH())) return emptyAnnotations();
+		const a = JSON.parse(readFileSync(ANNOT_PATH(), "utf8"));
+		if (!a || typeof a !== "object" || !a.tools || typeof a.tools !== "object") {
+			warn("标注台账结构损坏 —— 重建(只丢说明缓存, 不影响裁剪)");
+			return emptyAnnotations();
+		}
+		const tools = {};
+		for (const [k, v] of Object.entries(a.tools)) {
+			if (typeof k !== "string" || !k) continue;
+			if (!v || typeof v !== "object") continue;
+			const note = typeof v.note === "string" ? v.note : "";
+			const source = v.source === "manual" ? "manual" : v.source === "auto" ? "auto" : "";
+			if (!note && !source) continue;
+			tools[k] = {
+				note,
+				source,
+				at: String(v.at || ""),
+				quality: v.quality === "ok" ? "ok" : v.quality === "thin" ? "thin" : "missing",
+			};
+		}
+		return { version: 1, updatedAt: a.updatedAt || "", tools };
+	} catch (e) {
+		warn("标注台账读取失败(重建): " + String((e && e.message) || e));
+		return emptyAnnotations();
+	}
+}
+
+/* 载入台账到内存缓存(启动一次 + 面板拉取时兜底)。 */
+function loadAnnotations() {
+	const a = readAnnotations();
+	ANNOT_MEM.clear();
+	for (const [k, v] of Object.entries(a.tools)) ANNOT_MEM.set(k, v);
+	return a;
+}
+
+/* 从 description 抽**完整用途说明**(首句 + 去前缀噪声 + **不截断**)。
+ *
+ * ★★★ 设计修正(v0.16.0, 用户裁定 2026-11-15 06:08):
+ *   上一版把说明截断到 160B, 理由是「决策面一行可读」。**实测证明这是错的**:
+ *   主会话面 98 件里 **93 件被截断**, 累计丢掉 **31,297B**
+ *   (原始 description 共 40,811B → 落盘仅 10,938B, 丢了 77%)。
+ *   而且被砍掉的恰是**区分维度**:
+ *     · explain_gate 的归因档位清单(preset_rules.deny/main_deny/… 被砍到只剩前两个)
+ *     · read_tool_result 的 "by callId"(调用方式是关键信息)
+ *     · dsh_web_restart 的 "连鉴权网关、frp 链路" 等后果说明
+ *   ⇒ 说明被砍短 ⇒ 模型按残缺语义分配工具 ⇒ **抑制可用性与分配精度**。
+ *
+ *   ⇒ 修法: **存储层不截断**(保留完整说明, 供模型查阅与人工补写);
+ *     短摘要**只在显示层派生**(面板列表用), 不回写台账。
+ *
+ * ★ 保留「首句 + 去前缀噪声」: 它们去掉的是**噪声**(如 "Word: " 前缀),
+ *   不是信息 ⇒ 不影响分配精度。
+ */
+function deriveNote(description) {
+	const s = String(description || "").replace(/\s+/g, " ").trim();
+	if (!s) return "";
+	let head = s;
+	/* 切在第一个句末标点(中英文都切); 切点为 0 时不动(说明本身就是短句)。 */
+	const cut = head.search(/[。；;]|\.(?:\s|$)/);
+	if (cut > 0) head = head.slice(0, cut);
+	/* 去「Word: 」这类前缀噪声。 */
+	head = head.replace(/^[A-Za-z][A-Za-z ]{0,24}:\s*/, "").trim();
+	return head;
+}
+
+/* 显示层短摘要(面板列表用): 从完整说明派生, **不回写台账**。
+ * ★ 与存储层分离的理由: 面板要「一行可扫」, 但模型查阅/人工补写要**完整说明**
+ *   ⇒ 两者不能共用一份数据(共用 ⇒ 必有一方被截断 ⇒ 另一方受损)。 */
+function deriveSummary(note) {
+	const s = String(note || "").trim();
+	if (!s) return "";
+	if (Buffer.byteLength(s, "utf8") <= ANNOT_MAX_BYTES) return s;
+	const ellipsis = "…";
+	const ellBytes = Buffer.byteLength(ellipsis, "utf8");
+	let cut = 0, bytes = 0;
+	for (const ch of s) {
+		const b = Buffer.byteLength(ch, "utf8");
+		if (bytes + b > ANNOT_MAX_BYTES - ellBytes) break;
+		bytes += b; cut += ch.length;
+	}
+	return s.slice(0, cut) + ellipsis;
+}
+
+/* 质量闸: 这条说明算不算「良好」。返 "ok" | "thin" | "missing"。
+ * ★ [v0.16.0 MoA 盲审 P1 修·二轮] 判据④ 换掉:
+ *   原判据 = 「必须命中动作词表」⇒ 生产实测**假阳性率 100%**
+ *   (35/35 thin 全是词表缺口; 扩词表后 30/30 仍是词表缺口)⇒ 该判据不可用。
+ *   新判据 = **信息增益**: 说明里必须含**工具名之外的实词**;
+ *   动作词命中只作**正向信号**(命中 ⇒ 直接 ok, 不再因词表缺口误伤)。
+ *   实测同批 120 件: ok=118 / thin=2, 且那 2 件恰是**真该人工补写**的
+ *   ("PaddleOCR paddleocr_vl tool" 纯重念 / "Use only in plan mode" 说的是约束非用途)。
+ */
+function noteQuality(name, note) {
+	const s = String(note || "").trim();
+	if (!s) return "missing";
+	if (Buffer.byteLength(s, "utf8") < ANNOT_MIN_BYTES) return "thin";
+	/* ④ 信息增益(**主判据**): 说明里必须有**工具名之外的实词**。
+	 *   ★ 这条**不需要维护任何词表** ⇒ 词表过时不会造成假绿/假红。
+	 *   ★ 它同时**覆盖**了「只是重念工具名」这个旧判据:
+	 *     说明只由工具名自身的词组成 ⇒ 相对工具名零增益 ⇒ 这里就判 thin。
+	 *   (实测: 去掉旧的「重念名」判据后, A2c/A2d 两例的判定**不变** ⇒ 旧判据冗余。) */
+	if (!noteHasInfoGain(name, s)) return "thin";
+	return "ok";
+}
+
+/**
+ * 把一次观测到的 (工具名 → definition) 并入标注台账。
+ * manual 条目**永不被覆盖**(人工优先); auto 条目内容不变则不写盘。
+ * @param {Map<string, object>} observed 工具名 → definition(或含 description 的对象)
+ * @returns {boolean} 是否变化(变化才写盘)
+ */
+function mergeAnnotations(observed) {
+	if (!observed || !observed.size) return false;
+	let changed = false;
+	const now = new Date().toISOString();
+	for (const [name, def] of observed) {
+		if (typeof name !== "string" || !name) continue;
+		const cur = ANNOT_MEM.get(name);
+		if (cur && cur.source === "manual") continue;   /* 人工优先: 永不覆盖 */
+		const desc = typeof def?.description === "string" ? def.description : "";
+		const note = deriveNote(desc);
+		const quality = noteQuality(name, note);
+		if (cur && cur.note === note && cur.quality === quality) continue;
+		ANNOT_MEM.set(name, { note, source: "auto", at: now, quality });
+		changed = true;
+	}
+	if (!changed) return false;
+	writeAnnotations();
+	return true;
+}
+
+/* 落盘台账(唯一写者)。 */
+function writeAnnotations() {
+	try {
+		const d = { version: 1, updatedAt: new Date().toISOString(), tools: Object.fromEntries(ANNOT_MEM) };
+		mkdirSync(profileDir(), { recursive: true });
+		atomicWrite(ANNOT_PATH(), JSON.stringify(d, null, 1));
+	} catch (e) { warn("标注台账写入失败(说明缓存缺失, 不影响裁剪): " + String((e && e.message) || e)); }
+}
+
+/**
+ * 人工标注: 写一句说明(覆盖自动初标)。空说明 = 清除人工标注(回落到自动初标)。
+ * @returns {{ok:boolean, error?:string}}
+ */
+function setAnnotation(name, note) {
+	const n = String(name || "").trim();
+	if (!n) return { ok: false, error: "工具名为空" };
+	const text = String(note ?? "").trim();
+	const now = new Date().toISOString();
+	if (!text) {
+		/* 清除人工标注 ⇒ 回到自动初标(重新从 description 派生)。 */
+		const cur = ANNOT_MEM.get(n);
+		if (cur?.source === "manual") { ANNOT_MEM.delete(n); writeAnnotations(); return { ok: true, cleared: true }; }
+		return { ok: true, cleared: false };
+	}
+	ANNOT_MEM.set(n, { note: text, source: "manual", at: now, quality: noteQuality(n, text) });
+	writeAnnotations();
+	return { ok: true, quality: noteQuality(n, text) };
+}
+
+/* 采集一次标注观测: 工具名 → definition。
+ * @param {boolean} includeAgents 是否遍历各 agent 可见面(取 preset 层域工具)
+ * @returns {Map<string, object>}
+ */
+function collectAnnotationDefs(includeAgents = true) {
+	const out = new Map();
+	try {
+		if (!TOOLS) return out;
+		try {
+			const gv = TOOLS.view(undefined);
+			for (const [n, d] of gv?.visible || []) if (d) out.set(n, d);
+		} catch { /* keep */ }
+		if (includeAgents) {
+			const agents = ROOT_CTX?.get?.("agents");
+			if (agents?.list) {
+				for (const a of agents.list()) {
+					try {
+						const v = TOOLS.view(a);
+						for (const [n, d] of v?.visible || []) if (d) out.set(n, d);
+					} catch { /* keep */ }
+				}
+			}
+		}
+	} catch (e) { warn("标注采集失败: " + String((e && e.message) || e)); }
+	return out;
+}
+
+/* [v0.16.0 §1] agent 诞生时的初标(决定性覆盖点)。
+ *
+ * ★ 成本分层(agent/created 是**串行事件**, 慢监听=会话创建卡死):
+ *   ① 全局层扫描(view(undefined), O(面大小))—— 每次都做, 极廉;
+ *   ② 遍历各 agent 可见面(O(会话数 × 面大小))—— **只在台账缺名时才做**。
+ * ★★★ 「新名出现」的判据必须**双轨**(预演指出, 属实, 已修):
+ *   只看全局层 ⇒ 主会话 97 件全在全局层 ⇒ 稳态下**永不做全量遍历**
+ *   ⇒ word/excel/ppt/illustrator 等**域工具(preset 层)**永远不被标注。
+ *   ⇒ 判据 = 全局层有新名 **或 该 agent 自己的面有新名**:
+ *     · 前者覆盖「宿主/插件新装全局工具」;
+ *     · 后者覆盖「本 preset 才有的工具」(域会话创建时该 agent 面上出现域工具)。
+ *
+ * @param {object} agent 新生 agent
+ */
+function annotateOnAgentCreated(agent) {
+	/* ① 全局层: 廉价, 每次都做。 */
+	const global = collectAnnotationDefs(false);
+	if (!global.size) return false;
+	/* ② 新名判据(双轨): 全局层有新名, 或**本 agent 自己的面**有新名。 */
+	let agentHasNew = false;
+	try {
+		const v = TOOLS.view(agent);
+		for (const n of v?.visible?.keys?.() || []) {
+			if (!ANNOT_MEM.has(n)) { agentHasNew = true; break; }
+		}
+	} catch { /* keep: 判据失败时按「无新名」处理(保守, 少扫一次) */ }
+	const globalHasNew = [...global.keys()].some((n) => !ANNOT_MEM.has(n));
+	const defs = (globalHasNew || agentHasNew) ? collectAnnotationDefs(true) : global;
+	return mergeAnnotations(defs);
+}
+
+/* 落盘能力标签目录(供 role-briefs 注入决策面 brief)。
+ * 单一真相源: 生成逻辑只在 host 侧; brief 侧只读文件(不复制生成逻辑)。 */
+const CATALOG_PATH = () => join(profileDir(), "capability-catalog.txt");
+function writeCapabilityCatalog(text) {
+	try {
+		mkdirSync(profileDir(), { recursive: true });
+		atomicWrite(CATALOG_PATH(), text);
+		return true;
+	} catch (e) { warn("能力标签目录落盘失败(brief 少了目录段, 不影响引导): " + String((e && e.message) || e)); return false; }
+}
+
+/* ── [v0.16.0 §2] 能力标签目录(决策面用) ──────────────────────────────────
+ * 目标: 让**决策面**(router / lead)知道自己能派哪些能力、每个能干什么,
+ *       而不必为此携带全量工具 schema。
+ *
+ * ★ 为什么不是「剥参数」: 宿主 projectToolSchema() 与 validateArgs() 读的是
+ *   **同一个** definition.parameters 字段(dsh-tools:367 / :321)⇒ 剥了参数,
+ *   模型照样调, 执行时校验必挂 ⇒ 那是制造错调, 不是省 token。
+ *   ⇒ 正确形态 = **决策面不带工具 schema, 改带一份紧凑目录**;
+ *     真正要执行的工具由**执行面**(worker)带完整 schema。
+ *
+ * ★ 实测收益(2026-11-15, 真实会话 request/header 拆包):
+ *   主会话 cordis-deep: 98 件 / desc 40,811B + param 47,136B = 87,947B;
+ *   cordis-router 面 19 件: desc 10,805B + param 10,224B = 21,029B;
+ *   本目录(9 标签, 覆盖 44 件工具的语义): **487B**。
+ *   ⇒ router 用 487B 换来「全部 9 个标签 + 每个的用途」, 而原代价是 21,029B
+ *     且只知道 19 个工具名(不知道那些标签能干什么)。
+ *
+ * ★ 形态选择: 部署期**静态**生成(不随会话动态变)——
+ *   11-06 实测: cacheR 中位 86.3%, 会话内动态换面盈亏平衡 ≈16 轮/会话,
+ *   而实测每会话目录重发中位数仅 4 次 ⇒ 会话内换面**必然亏本**。
+ *   ⇒ 正确形态 = 「部署期静态定面 + 会话期只增不减」。
+ */
+
+/* 标签语义表(人工一句式用途; 与 client.js 的能力标签页同源)。
+ * ★ 未知标签走空串 ⇒ 目录里标「(待补语义)」, 不假装有说明。 */
+const CAPABILITY_PURPOSE = {
+	literature: "多库学术检索(8库+3引擎)+引文核验+文献抽取",
+	reader: "网页与文件轻读(只读面, 不写不派)",
+	"reader-lead": "轻读面 + 可再派一级(带队长)",
+	"literature-lead": "文献检索面 + 可再派一级(带队长)",
+	ocr: "图片/PDF 版面与文字提取",
+	orchestrator: "纯编排: 只有派单权与任务清单",
+	bio: "生信命令行作业(shell + 文件读写)",
+	"web-report": "检索 + 读写成稿(网页报告)",
+	router: "路由者: 派单 + 沟通 + 调度(不含执行面)",
+};
+
+/**
+ * 生成能力标签目录(紧凑文本)。
+ * @param {object} cfg 生效配置
+ * @returns {string} 目录文本(空串 = 无可组装标签)
+ */
+function buildCapabilityCatalog(cfg) {
+	const caps = (cfg && typeof cfg.capabilities === "object" && Object.keys(cfg.capabilities).length)
+		? cfg.capabilities
+		: DEFAULT_CAPABILITIES;
+	const rows = Object.entries(caps).map(([tag, list]) => {
+		const n = Array.isArray(list) ? list.length : 0;
+		const purpose = CAPABILITY_PURPOSE[tag] || "(待补语义)";
+		return `- ${tag}(${n} 件): ${purpose}`;
+	});
+	if (!rows.length) return "";
+	return [
+		"# 能力标签目录(部署期静态; 组装面 = 标签并集, 单件可作补丁)",
+		"# 组装 = dispatch_composed(capabilities=[标签]); 标签即整面, 不用写工具名",
+		...rows,
+	].join("\n");
+}
+
 /**
  * 把一次观测到的 (preset → 工具名集合) 并入归属表。
  * @param {Map<string, Set<string>>} delta preset id → 新增工具名集合
@@ -779,6 +1156,15 @@ function syncLock(lock, knownSet, cfg, globalNames = null, lockPath = null) {
 	}
 	lock.autoDenyNew = autoDenyNew;
 	if (changed) writeLock(lock, lockPath);
+	/* [v0.16.0 §1] 自动初标: **发现即标注**(与闸门同一发现点, 不另开轮询)。
+	 * 采集的是**运行时 definition**(权威 description)⇒ 新工具一被发现就有初标;
+	 * 初标不达质量闸 ⇒ 进「待标注」队列(面板提示人工补写)。
+	 * ★ 不阻断裁剪: 标注失败/缺失**不影响**闸门行为(台账只是说明缓存)。
+	 * ★ manual 条目在 mergeAnnotations 内保护(人工优先, 永不被自动覆盖)。
+	 * ★★ 这**不是**决定性覆盖点(实测: 只覆盖子代路径能看到的工具; 主会话面
+	 *   与域 preset 工具要靠 gateAgent 入口那一次 + 面板采集点)。
+	 *   决定性覆盖点见 annotateOnAgentCreated 的注释。 */
+	try { mergeAnnotations(collectAnnotationDefs()); } catch (e) { warn("自动初标失败(不影响裁剪): " + String((e && e.message) || e)); }
 	return changed;
 }
 
@@ -1472,6 +1858,24 @@ function gateAgent(agent) {
 		}
 		const header = agent?.session?.header;
 		const depth = header?.delegationDepth ?? 0;
+		/* [v0.16.0 §1] ★★★ **决定性初标点**(覆盖主会话与子代两条路径)。
+		 *
+		 * ★★ 为什么必须是这里(逐层实测排除, 前两版都错):
+		 *   ① apply 的立即执行段 ⇒ 只看得到同步注册的第三方插件工具(实测 17 件);
+		 *   ② ctx.effect 回调内 ⇒ 仍只有 17 件(实测: 重启后 annotations.json
+		 *      的 updatedAt 纹丝不动)⇒ 各插件的 effect 彼此独立调度,
+		 *      **没有「所有插件都注册完」这个信号**可等;
+		 *   ③ agent/created ⇒ ★ **工具面此时已完整**(原生插件早已 apply 完,
+		 *      且该 agent 自己的 preset 层工具已挂载)⇒ 此刻采集 = 全量。
+		 *   ⇒ 三层时序问题在此收口: 把初标挂在「agent 诞生」这个**运行时事实**上,
+		 *     而不是「插件加载完成」这个**没有信号**的概念上。
+		 *
+		 * ★ 成本分层(agent/created 是**串行事件**, 慢监听=会话创建卡死):
+		 *   采集分两级 —— ①全局层(view(undefined), O(面大小))每次都做, 极廉;
+		 *   ②遍历各 agent 可见面(O(会话数 × 面大小))**只在台账有新增名时才做**。
+		 *   ⇒ 稳态下每次 agent 诞生只付一次全局层扫描。
+		 * ★ 失败不影响裁剪(台账只是说明缓存)。 */
+		try { annotateOnAgentCreated(agent); } catch (e) { warn("初标失败(不影响裁剪): " + String((e && e.message) || e)); }
 		if (depth <= 0) return gateMain(agent); /* [v0.4] depth0 也过闸(main_deny 显式名单) */
 		const cap = PENDING_CAPS.get(agent?.id);
 		log(`[composed-debug] agent.id=${agent?.id} PENDING_CAPS.size=${PENDING_CAPS.size} keys=${[...PENDING_CAPS.keys()].map(k=>k.slice(0,12)).join(",")} hit=${!!cap}`);
@@ -1772,6 +2176,14 @@ const gateSvc = {
 			}
 			lock.autoDenyNew = next.autoDenyNew;
 			writeLock(lock);
+			/* [v0.16.0 §2] 保存后**重生成决策面目录**(写穿透)。
+			 * ★ 缺陷(MoA 盲审 P1 实测指出): 目录原有两个写点 —— apply 启动期与
+			 *   面板拉取 capabilityCatalog(); **save() 不写** ⇒ 用户改了能力标签表
+			 *   并「保存(热生效)」后, 若不重启、也不打开面板, 新建的 router 会话
+			 *   读到的仍是**旧目录** ⇒ 窗口可无限期持续 ⇒ 与「热生效」文案矛盾。
+			 * ⇒ 修法: 配置落盘后立刻按**新配置**重生成目录。
+			 * ★ 目录内容只依赖 config.capabilities ⇒ 用 next(刚落盘的配置)即可。 */
+			try { writeCapabilityCatalog(buildCapabilityCatalog(next)); } catch (e) { warn("目录重生成失败(不影响配置保存): " + String((e && e.message) || e)); }
 			return { ok: true };
 		} catch (e) { return { ok: false, error: String((e && e.message) || e) }; }
 	},
@@ -1815,7 +2227,11 @@ const gateSvc = {
 				presetFaces[p] = { tools: [], face: [...snap.restrictable].sort(), ownCount: 0, servers: srv, unobserved: true };
 			}
 			const groups = autoGroups(snap.restrictable);
-			return { ok: true, ...snap, ruledCount: ruled.length, undiscovered, stale, pending, forced, presetFaces, groups, originUpdatedAt: origin.updatedAt || null };
+			/* [v0.16.0 §1] 标注台账并入快照: 面板一处拿到
+			 *   ① 每件工具的一句说明 ② 待标注队列(质量不达标) ③ 质量计数。
+			 * ★ 现读现算(无缓存): 人工刚标注完刷新面板即可见(热生效)。 */
+			const annot = annotationsInfo();
+			return { ok: true, ...snap, ruledCount: ruled.length, undiscovered, stale, pending, forced, presetFaces, groups, originUpdatedAt: origin.updatedAt || null, annotations: annot.ok ? annot : { ok: false, error: annot.error } };
 		} catch (e) { return { ok: false, error: String((e && e.message) || e) }; }
 	},
 	/* [v0.15 §3.2] 归属表(逐 preset 自带工具)—— 面板数据源 + 可单独拉取。 */
@@ -1848,6 +2264,89 @@ const gateSvc = {
 		};
 		flushUsage(); /* 拉取即落盘(快照对齐用户所见); 原实现置于 return 之后=死码, 落盘从未生效 */
 		return result;
+	},
+	/* ── [v0.16.0 §1] 标注台账服务方法(面板数据面) ───────────────────────── */
+	/* annotationsInfo: 全量标注 + 质量队列计数 + 逐件运行时状态。
+	 * ★ 与 lock/origin 同口径: 失效名保留(来源停用后再装回即自动复效)。 */
+	annotationsInfo(topN = 0) {
+		try {
+			/* ★★ 面板读取时**先采集一次**(确定性覆盖点)。
+			 *   工具注册是**惰性**的(各插件 apply 时注册)⇒ 本插件自己 apply 阶段
+			 *   能看到的工具集取决于**插件加载顺序**, 不保证完整。
+			 *   (实测: 重启后未建过子代时, annotations.json 干脆不存在 —— 目录文件
+			 *    正常生成 ⇒ 是注册时序, 不是配置问题。)
+			 *   ⇒ 面板被拉取时所有插件早已 apply 完 ⇒ 此刻采集才是全量。
+			 * ★ 这一步也是「面板打开即自愈」: 缺标注不必等新工具被发现。
+			 * ★ 与 gateAgent 入口那次的分工: 面板采集覆盖**当前活跃会话**的面
+			 *   (含域 preset 工具); gateAgent 那次覆盖「agent 诞生」这个时机。 */
+			try { mergeAnnotations(collectAnnotationDefs()); } catch (e) { warn("面板采集标注失败(不影响面板其余部分): " + String((e && e.message) || e)); }
+			const a = loadAnnotations();
+			const snap = snapshotNames();
+			const live = new Set(snap?.restrictable || []);
+			const rows = Object.entries(a.tools || {}).map(([name, v]) => ({
+				name,
+				/* ★ [v0.16.0 用户裁定 2026-11-15 06:08] 双字段:
+				 *   note    = **完整说明**(存储层; 供模型查阅与人工补写, **不截断**);
+				 *   summary = **显示层短摘要**(面板列表一行可扫; 由 note 派生, **不回写**)。
+				 * ★ 两者分离的理由: 共用一份 ⇒ 必有一方被截断 ⇒ 另一方受损
+				 *   (实测: 截断版 93/98 件被砍, 累计丢 31,297B, 且被砍的恰是
+				 *   **区分维度** —— explain_gate 的归因档位清单、read_tool_result 的
+				 *   "by callId" 等 ⇒ 说明残缺 ⇒ 模型按残缺语义分配 ⇒ 抑制可用性与分配精度)。 */
+				note: v.note || "",
+				summary: deriveSummary(v.note || ""),
+				source: v.source || "auto",
+				quality: v.quality || "missing",
+				at: v.at || "",
+				runtime: live.has(name),
+			}));
+			rows.sort((x, y) => x.name.localeCompare(y.name));
+			const counts = { total: rows.length, ok: 0, thin: 0, missing: 0, manual: 0, auto: 0, stale: 0 };
+			for (const r of rows) {
+				if (r.quality === "ok") counts.ok++; else if (r.quality === "thin") counts.thin++; else counts.missing++;
+				if (r.source === "manual") counts.manual++; else counts.auto++;
+				if (!r.runtime) counts.stale++;
+			}
+			/* 待标注队列 = 质量不达标者(人工未补写); 已在运行时不可见的排在后面(不急)。 */
+			const need = rows.filter((r) => r.quality !== "ok").sort((x, y) => (x.runtime === y.runtime ? 0 : x.runtime ? -1 : 1));
+			return {
+				ok: true,
+				path: ANNOT_PATH(),
+				updatedAt: a.updatedAt || "",
+				counts,
+				need: need.slice(0, topN > 0 ? topN : need.length),
+				rows: topN > 0 ? rows.slice(0, topN) : rows,
+				/* 质量闸判据(面板展示用, 让人知道「良好」的准绳是什么) */
+				gate: { minBytes: ANNOT_MIN_BYTES, maxBytes: ANNOT_MAX_BYTES },
+			};
+		} catch (e) { return { ok: false, error: String((e && e.message) || e) }; }
+	},
+	/* 人工标注: 写一句说明(覆盖自动初标); 空串 = 清除人工标注回落自动。 */
+	annotate(name, note) {
+		try {
+			const r = setAnnotation(name, note);
+			if (!r.ok) return r;
+			try { audit({ ts: new Date().toISOString(), ev: "annotation-set", name: String(name), source: "manual", quality: r.quality || null }); } catch { /* noop */ }
+			return { ...r, count: ANNOT_MEM.size };
+		} catch (e) { return { ok: false, error: String((e && e.message) || e) }; }
+	},
+	/* [v0.16.0 §2] 能力标签目录(决策面用): 紧凑文本 + 体积账。 */
+	capabilityCatalog() {
+		try {
+			const cfg = readConfig();
+			const text = buildCapabilityCatalog(cfg);
+			/* 拉取即重生成并落盘 ⇒ 热生效(改标签表后刷新面板即可, 无需重启)。 */
+			writeCapabilityCatalog(text);
+			const caps = (cfg && typeof cfg.capabilities === "object" && Object.keys(cfg.capabilities).length)
+				? cfg.capabilities : DEFAULT_CAPABILITIES;
+			const names = new Set(Object.values(caps).flat());
+			return {
+				ok: true,
+				text,
+				bytes: Buffer.byteLength(text, "utf8"),
+				tags: Object.keys(caps),
+				toolCount: names.size,
+			};
+		} catch (e) { return { ok: false, error: String((e && e.message) || e) }; }
 	},
 	/* pending 裁决: deny=入 config baseline(继承 preset 例外体系); allow=仅消 pending */
 	rule(names, action) {
@@ -1988,6 +2487,20 @@ export function apply(ctx) {
 	/* 频率快照载入: 必须在此处(而非模块加载期)——profileContext 此时才可取,
 	 * 否则按缺省 profile 解析目录会读错文件(跨 profile 污染)。 */
 	try { loadUsageSnapshot(); } catch { /* 载入失败已在内部告警 */ }
+	/* [v0.16.0 §1] 标注台账**载入**(初标另见 TOOLS 就绪之后)。
+	 * ★ 为什么不只靠「agent 诞生时初标」: 面板要在**没建过子代**时也能看到
+	 *   全量工具的说明与待标注队列(否则新装 profile 打开面板是一片空白,
+	 *   而这正是用户最需要「哪些工具没说明好」的时刻)。
+	 * ★ 初标只读 definition.description, 不写任何用户配置 ⇒ 零副作用。
+	 * ★★ 载入与初标**必须分开**: 初标要读运行时工具面, 而 TOOLS 在本文件
+	 *   后面的 ctx.get("tools") 处才就绪 ⇒ 在此调用 collectAnnotationDefs()
+	 *   必然拿到空集(实测: 重启后 annotations.json 根本没生成)。 */
+	try { loadAnnotations(); } catch { /* 载入失败已在内部告警 */ }
+	/* [v0.16.0 §2] 落盘能力标签目录(决策面 brief 的数据源)。
+	 * ★ 现生成现落盘(与 readConfig 同源)⇒ 改 config 后重启即更新;
+	 *   面板拉取 capabilityCatalog() 时也会重生成(热生效)。
+	 * ★ 部署期静态形态: 目录不随会话变(11-06 实测会话内动态换面必然亏本)。 */
+	try { writeCapabilityCatalog(buildCapabilityCatalog(readConfig())); } catch { /* 生成失败已在内部告警 */ }
 	/* [v0.14.0 P2] 启动即检查台账体积: 超阈值立即归档(不必等 64 次写才触发)。 */
 	try { rotateAuditIfNeeded(); } catch { /* 归档失败已在内部告警 */ }
 
@@ -2028,6 +2541,17 @@ USAGE_TOTAL.set(name, (USAGE_TOTAL.get(name) || 0) + 1);
 		return () => { try { off?.(); } catch { /* noop */ } };
 	}, "dsh-depth-tool-gate.usageCollector()");
 	try { TOOLS = ctx.get("tools"); } catch (e) { warn("ctx.get(tools) 失败(插件空转, 不影响宿主): " + String((e && e.message) || e)); TOOLS = null; }
+	/* [v0.16.0 §1] 启动期**不在此初标**(前两版都错, 已由生产实测逐层排除):
+	 *   ① apply 的立即执行段 ⇒ 只看得到同步注册的第三方插件工具(实测 17 件);
+	 *   ② ctx.effect 回调内 ⇒ 仍只有 17 件(实测: 重启后 annotations.json 的
+	 *      updatedAt 纹丝不动)⇒ 各插件的 effect 彼此独立调度,
+	 *      **没有「所有插件都注册完」这个信号**可等。
+	 *   ⇒ 初标挂在 **agent/created**(gateAgent 入口)—— 那时工具面已完整。
+	 *   详见 annotateOnAgentCreated 的注释。
+	 * ★ 这里只**载入台账**(内存缓存先就位), 不初标。 */
+	ctx.effect(() => {
+		try { loadAnnotations(); } catch (e) { warn("标注台账载入失败(不影响裁剪): " + String((e && e.message) || e)); }
+	}, "dsh-depth-tool-gate.loadAnnotations()");
 	ctx.effect(() => ctx.provide("depthToolGate", gateSvc), "dsh-depth-tool-gate.provideSvc()");
 
 	/* ⑤ list_agent_presets: preset 能力目录(运行时注册表权威)——主会话按任务
@@ -2192,6 +2716,93 @@ USAGE_TOTAL.set(name, (USAGE_TOTAL.get(name) || 0) + 1);
 			return () => { try { reg?.dispose?.(); } catch { /* noop */ } };
 		} catch (e) { warn("explain_gate 注册失败: " + String((e && e.message) || e)); return () => {}; }
 	}, "dsh-depth-tool-gate.explainGate()");
+
+	/* ⑫ [v0.16.0] describe_tools: **模型侧**查询工具的用途说明(只读)。
+	 * ★ 为什么需要它(用户裁定 2026-11-15 06:08 的必要配套):
+	 *   完整说明存于 annotations.json, 但那个文件**只有面板读** ⇒ 模型看不到
+	 *   ⇒ 「保存完整说明」若没有模型侧出口, 就只是存了一堆模型读不到的文本
+	 *   ⇒ 用户诉求(说明要完整、要能提升分配精度)等于没落地。
+	 *   ⇒ 本工具给模型一个**按需查询**入口: 想知道某件工具干什么时查它的**完整说明**
+	 *     (不截断), 而不是靠被砍短的首句去猜。
+	 * ★ 设计取舍(与决策面目录同源):
+	 *   - 说明**不进系统提示**(否则每轮都带全量 ⇒ 成本高且挤占注意力);
+	 *   - 改成**按需查询**: 模型在"不确定某工具干什么"时调一次, 拿完整说明。
+	 *   ⇒ 零常驻成本 + 完整信息可得。
+	 * ★ 参数: names(工具名数组, 空 = 列当前可见面的全部说明)。
+	 *   keyword(可选): 按关键词过滤(如 "读取"/"search"), 用于"我想找能做某事的工具"。
+	 */
+	ctx.effect(() => {
+		try {
+			const reg = registerTool(ctx, {
+				name: "describe_tools",
+				description: "查询工具的用途说明(只读, 不修改任何状态): 返回指定工具的**完整**一句话用途说明(不截断), 以及它们是否在你的当前工具面内、说明质量(达标/简略/缺)。用于「不确定某件工具到底能干什么」时按需查证, 避免靠被截断的短描述误用工具。不给 names 时返回当前可见面的全部说明; 给 keyword 时按关键词过滤(中英文均可)。",
+				timeoutMs: undefined,
+				parameters: {
+					type: "object",
+					properties: {
+						names: { type: "array", items: { type: "string" }, description: "要查询的工具名(可省略 = 当前可见面的全部)" },
+						keyword: { type: "string", description: "按关键词过滤说明(如 读取/search/派单); 不给则不过滤" },
+					},
+				},
+				output: {
+					schema: { type: "object", additionalProperties: true },
+					render: (_a, value) => {
+						try {
+							const v = typeof value === "string" ? JSON.parse(value) : value;
+							const rows = Array.isArray(v?.tools) ? v.tools : [];
+							if (!rows.length) return [{ type: "text", text: "[describe_tools] 没有匹配的说明(工具名可能拼错, 或 keyword 无命中)。" }];
+							const head = `[describe_tools] ${rows.length} 件工具的说明:`;
+							const body = rows.map((r) => {
+								const flags = [];
+								if (!r.visible) flags.push("不在你的工具面内");
+								if (r.quality !== "ok") flags.push(r.quality === "missing" ? "说明缺失" : "说明简略");
+								return `  · ${r.name}${flags.length ? ` [${flags.join("; ")}]` : ""}\n    ${r.note || "(无说明)"}`;
+							}).join("\n");
+							return [{ type: "text", text: `${head}\n${body}` }];
+						} catch (e) { return [{ type: "text", text: "[describe_tools] render 失败: " + String(e) }]; }
+					},
+				},
+				async execute(_args, exec) {
+					try {
+						/* 采集一次(顺带补齐新工具的初标)。 */
+						try { mergeAnnotations(collectAnnotationDefs()); } catch { /* 不影响查询 */ }
+						const a = loadAnnotations();
+						/* 当前可见面(用于标注"可见/不可见")。 */
+						let visibleSet = new Set();
+						try {
+							const agent = exec?.agent;
+							if (agent) {
+								const scoped = createScope(agent.ctx, agent);
+								try { visibleSet = new Set(scoped.ctx.get("tools")?.view(agent)?.visible?.keys?.() || []); }
+								finally { try { scoped.dispose?.(); } catch { /* noop */ } }
+							}
+						} catch { /* 取不到就当全不可见(只影响标注) */ }
+						const want = Array.isArray(_args?.names) && _args.names.length
+							? _args.names.map(String)
+							: Object.keys(a.tools || {});
+						const kw = String(_args?.keyword || "").trim().toLowerCase();
+						const rows = [];
+						for (const n of want) {
+							const rec = (a.tools || {})[n];
+							const note = rec?.note || "";
+							if (kw && !(n.toLowerCase().includes(kw) || note.toLowerCase().includes(kw))) continue;
+							rows.push({
+								name: n,
+								note,
+								summary: deriveSummary(note),
+								quality: rec?.quality || "missing",
+								source: rec?.source || "auto",
+								visible: visibleSet.has(n),
+							});
+						}
+						return { ok: true, count: rows.length, tools: rows };
+					} catch (e) { return { error: String((e && e.message) || e) }; }
+				},
+			}, "describe_tools");
+			log("describe_tools 工具已注册(模型侧查工具用途说明)");
+			return () => { try { reg?.dispose?.(); } catch { /* noop */ } };
+		} catch (e) { warn("describe_tools 注册失败(查说明不可用, 不影响裁剪): " + String((e && e.message) || e)); return () => {}; }
+	}, "dsh-depth-tool-gate.describeTools()");
 
 	/* ⑨ [v0.4.2] dispatch_composed: 动态工具面组装派单(wrapper 工具)。
 	 *    流程: 标签→allow 并集 → reserved childId 预挂 PENDING_CAPS →

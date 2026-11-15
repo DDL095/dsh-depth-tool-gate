@@ -16,9 +16,15 @@
  * (拒绝路径分隔符, 与官方 resolveInstructionFileCandidates 同过滤口径)。
  * 文件缺失/无 config 时 warn 并跳过(不阻断会话, 引导缺位优于会话失败)。 */
 export const name = "dtg-role-brief";
+/* ★ 注入清单**不含 profileContext**(实测权衡, 2026-11-15):
+ *   目录文本若要动态取 config.capabilities, 需 ctx.get("profileContext")。
+ *   但该服务**可能不存在**(宿主 dsh-app-boot:3099 有 `=== void 0` 分支)⇒
+ *   写进 inject 会让本插件在服务缺席时**加载失败** ⇒ 挂它的 6+ 个 preset
+ *   全部失去岗位引导 —— 正是 v0.8.2 专门治理过的静默降级故障。
+ *   ⇒ 改为**软探测**(ctx.get 带 try/catch, 取不到就跳过目录注入, brief 仍在)。 */
 export const inject = ["systemPrompt"];
 
-import { readFileSync, appendFileSync, mkdirSync } from "node:fs";
+import { readFileSync, appendFileSync, mkdirSync, existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -45,6 +51,30 @@ function readBrief(file) {
 	}
 }
 
+/* ── [v0.16.0 §2] 能力标签目录(决策面用) ──────────────────────────────────
+ * 数据源 = host 侧生成的落盘文件(单一真相源; 生成逻辑不复制到本模块,
+ * 否则两处会漂移 —— 本仓同类教训见 versions.md 的「模块化组织」条目)。
+ *
+ * ★ 为什么目录是**落盘**而不是即时计算:
+ *   ① role-briefs 不该自己解析 config.capabilities(那是 host 的通道语义);
+ *   ② host 侧算目录时**已经**持有生效配置(读的是同一个 readConfig());
+ *   ③ 落盘 = 可被探针直接断言字节数(判别力)。
+ *
+ * ★ 落盘路径: profile 目录(与 config/lock 同级), 文件名不起插件前缀
+ *   (同 host 侧 origin.json 的理由: 发布链对「旧包名 + 数据文件名」敏感)。
+ */
+function readCapabilityCatalog(ctx) {
+	try {
+		const pc = ctx?.get?.("profileContext");
+		const dir = (pc && typeof pc.dir === "string" && pc.dir)
+			? pc.dir
+			: join(DSH_HOME, "profiles", "web");
+		const p = join(dir, "capability-catalog.txt");
+		if (!existsSync(p)) return "";
+		return readFileSync(p, "utf8").trim();
+	} catch { return ""; }
+}
+
 export function apply(ctx, config) {
 	const brief = typeof config === "object" && config !== null ? config.brief : void 0;
 	if (typeof brief !== "string" || !brief || /[\\/]/.test(brief)) {
@@ -58,7 +88,24 @@ export function apply(ctx, config) {
 		logAudit({ brief, reason: "both-missing", impact: "子代无 role 引导(静默降级, 已可见化)" });
 		return () => {};
 	}
-	const text = [common, role].filter((s) => s !== void 0).join("\n\n");
+	/* [v0.16.0 §2] 能力标签目录注入(仅**决策面**角色)。
+	 * ★ 为什么只给决策面: 决策面需要「能派哪些能力」来选型; 执行面自己带
+	 *   完整工具 schema, 目录对它没用(反而是冗余字节)。
+	 * ★★ 覆盖范围(**如实**: 本版只兑现 1/N):
+	 *   白名单**只含 cordis-router**。其余决策面角色(sci-foreman 等派工面、
+	 *   sci-deep 等)本版**未纳入** —— 纳入它们属产品决策(哪些面该知道全部标签),
+	 *   不是代码缺陷, 故不在本版夹带。
+	 *   ★ 初版注释写「router / lead 系」与实现不符(lead 系是**能力标签**,
+	 *     不是 brief 角色; 组装出的子代继承父 preset, 能否拿到目录取决于父角色)
+	 *     ⇒ 注释已按实现如实改写。
+	 * ★ 为什么目录是**文本**而不是工具: 目录不进工具目录(schema)⇒ 不占
+	 *   每轮重发的工具目录税; 它是提示词里的一段静态文本(一次注入, 常驻)。
+	 * ★ 缺失是**正常态**(host 未生成/未部署)⇒ 静默跳过, 不报错不降级 brief。 */
+	const DECISION_BRIEFS = new Set(["cordis-router"]);
+	const catalog = DECISION_BRIEFS.has(brief) ? readCapabilityCatalog(ctx) : "";
+	const parts = [common, role];
+	if (catalog) parts.push(catalog);
+	const text = parts.filter((s) => s !== void 0).join("\n\n");
 	const sp = ctx.get("systemPrompt");
 	if (!sp || typeof sp.section !== "function") {
 		console.warn("[dtg-role-brief] systemPrompt 服务不可用——跳过注入(子代将无 role 引导)");
