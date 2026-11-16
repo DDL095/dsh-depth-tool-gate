@@ -11,6 +11,17 @@
  * 每件工具带来源标注(ORIGIN 表 + mcp__ 前缀推断); 详注见仓库内
  *   docs/tool-annotations.md(面板 note 与文档同源维护)。
  * 纯 DOM/React.createElement 构建, 零 innerHTML(同 dfile-menu 安全范式)。 */
+/* ★ [v0.16.8] **客户端版本镜像**(package.json.version 的镜像)。
+ *   ★ 为什么需要它: client.js 由**浏览器**加载, 拿不到自己的 package.json
+ *     (无 fs、无 import.meta 可解析包路径)⇒ 客户端侧无法自己读出版本。
+ *   ★ 为什么不是「写死数字」: package.json 才是**单一权威源**; 这份镜像是它的
+ *     **副本**, 由 scripts/smoke-readme-facts.mjs 的断言强制两者一致
+ *     (改 package.json 而忘改镜像 ⇒ 事实闸转红)——
+ *     与 README 两版里写版本号的既有做法完全同构。
+ *   ★ 宿主那侧不写死: 直接读 host status 下发的 version(= host 自己的 package.json)。
+ */
+const CLIENT_VERSION = "0.16.8";
+
 window.__ModuleLoader__.load({
 	/* 模块注册 id 必须 == 包名(package.json 的 name): 宿主 arrive(row) 取
 	 * row.id(= 包名) 去查 factories.has(id), 不匹配即报
@@ -784,6 +795,17 @@ window.__ModuleLoader__.load({
 				h("p", { style: { fontSize: 12, opacity: 0.75, margin: "4px 0 10px" } },
 					"两层工具面治理: 「子代理禁」对之后创建/恢复的子代理隐藏, 「主会话禁」对之后创建/恢复的主会话隐藏。",
 					h("b", null, "保存即热生效(运行中会话不变)"), "。悬停各项有说明; 术语与机制详见仓内 docs/。"),
+				/* ★ [v0.16.8] 版本徽标: 宿主版(host.status.version, 治理逻辑在跑的那份)
+				 *   + 客户端版(面板 UI 这份)。两者不一致 ⇒ 显式提示「宿主待重启」
+				 *   (改了 client.js 刷新浏览器即生效; 改了 host 侧必须重启 DSH)。 */
+				(() => {
+					const hostVer = (data && typeof data.version === "string" && data.version) ? data.version : "";
+					const cliVer = CLIENT_VERSION || "";
+					const same = !!hostVer && hostVer === cliVer;
+					return h("span", { style: { fontSize: 11, opacity: 0.7, marginLeft: 8, whiteSpace: "nowrap" } },
+						"版本 ", h("b", { style: { color: same ? "#7c8" : "#e8a33d" } }, cliVer || "?"),
+						hostVer && !same ? h("span", { title: "宿主侧(裁剪/闸门/台账)仍在跑旧版本 —— host 侧改动必须重启 DSH 才生效; 面板 client 刷新即已新", style: { color: "#e8a33d" } }, " · 宿主 " + hostVer + " 待重启") : null);
+				})(),
 				/* 开关 + 保存 + 统计 + 闸门摘要 */
 				h("div", { style: { display: "flex", alignItems: "center", gap: 12, marginBottom: 10, flexWrap: "wrap" } },
 					h("label", { style: { cursor: "pointer", display: "flex", alignItems: "center", gap: 6 } },

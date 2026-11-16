@@ -24,7 +24,7 @@ A DSH subagent inherits the main session's entire tool catalog and the full glob
 
 > **Quick start** — DSH ≥ 0.2.2-rc.1, Node ≥ 24.9.0. In your DSH profile directory (`~/.dsh/profiles/web`): `npm i dsh-depth-tool-gate`, then **append** `"dsh-depth-tool-gate"` to the `dsh.profile.bundles` array in that profile's `package.json`, restart DSH, and open **Settings → Subagent Tool Surface**. Full steps and prerequisites: [Install](#install).
 
-**Current version v0.16.7** · 中文说明见 [README.zh.md](README.zh.md) · 中文文档 `docs/*.md`
+**Current version v0.16.8** · 中文说明见 [README.zh.md](README.zh.md) · 中文文档 `docs/*.md`
 
 ---
 
@@ -144,7 +144,7 @@ A preset can mask named global system-prompt sections by registering same-named 
 
 ### 7. The panel (8 tabs)
 
-Settings → **Subagent Tool Surface** (子代理工具面):
+Settings → **Subagent Tool Surface** (子代理工具面). A **version badge** sits at the right of the panel title (since v0.16.8): it shows both the client version (the panel UI) and the host version (the trimming/gate/ledger code actually running); when they differ it flags "host x.y.z pending restart" — editing `client.js` takes effect on a browser refresh, while host-side changes need a DSH restart.
 
 | Tab | What it does |
 |---|---|
@@ -221,7 +221,7 @@ npm i dsh-depth-tool-gate
 ```jsonc
 {
   "dependencies": {
-    "dsh-depth-tool-gate": "^0.16.7"
+    "dsh-depth-tool-gate": "^0.16.8"
   },
   "dsh": {
     "profile": {
