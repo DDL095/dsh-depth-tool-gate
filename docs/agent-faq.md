@@ -36,7 +36,7 @@
 **续派不变面**：给已跑完的子代续派任务时，宿主冷恢复并重新物化它；闸门重新施加**同一份** allow 名单，不会落回通用 deny 名单 —— 工具面不会在一段持续的对话中途变掉。台账里该子代的 `claimCount>1` 即表示被续派过。
 
 ## Q8: 裁剪出了问题怎么排查？
-见 [troubleshooting.md](./troubleshooting.md)。核心口诀：**静默降级=最危险**（v0.8.2 起 role-brief 缺失记台账 `role-brief-missing` 可查）；面板 7 Tab 逐层对账（配置清单 vs 运行时发现 vs lock 状态 vs 台账事实）。
+见 [troubleshooting.md](./troubleshooting.md)。核心口诀：**静默降级=最危险**（v0.8.2 起 role-brief 缺失记台账 `role-brief-missing` 可查）；面板 8 Tab 逐层对账（配置清单 vs 运行时发现 vs lock 状态 vs 台账事实）。
 
 ## 权威数据源
 - 配置：`~/.dsh/profiles/web/depth-tool-gate.config.json`（热读，保存即生效）

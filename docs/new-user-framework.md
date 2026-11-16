@@ -95,7 +95,7 @@ tool-plugin-manager / prompt-slim
 
 ---
 
-## 3. 两种派活方式
+## 3. 派活方式与决策面
 
 ### 3.1 `subagent` —— 派一个 Worker，继承父级工具面
 
@@ -140,7 +140,31 @@ tool-plugin-manager / prompt-slim
 只能回一句「没有这个工具」—— 缺了归因，主会话无法定位。
 （它是只读工具、自身不受所报闸门约束、且不在底线清单里 ⇒ 带上它零治理风险。）
 
-### 3.4 `workflow` —— 批量子代理编排
+### 3.4 能力标签目录（决策面不需要 schema）
+
+router 要知道的是「**能派哪些能力、每个能干什么**」，而不是几十份工具 schema。
+插件为此维护一份**紧凑目录**，部署期静态生成并落盘，注入**决策面角色**的岗位引导：
+
+```
+# 能力标签目录 (9 标签)
+- literature (26): 多库学术检索(8库+3引擎)+引文核验+文献抽取
+- reader (10): 网页与文件轻读(只读面, 不写不派)
+...
+```
+
+★ **实测收益**（2026-11-15，真实会话 request/header 拆包）：
+主会话 `cordis-deep` 98 件 = desc 40,811B + param 47,136B = **87,947B**；
+`cordis-router` 面 19 件 = 21,029B，**且只知道 19 个工具名**（不知道那些工具能干什么）；
+本目录覆盖 44 件工具的语义 = **748B**（生产落盘实测值，含头部 2 行 + 正文 9 行）。
+
+★ **为什么是部署期静态**：实测 cacheR 中位 86.3%，会话内动态换面盈亏平衡 ≈16 轮/会话，
+而实测每会话目录重发中位数仅 4 次 ⇒ 会话内换面**必然亏本**。
+
+★ **为什么不剥参数**：宿主 `projectToolSchema()` 与 `validateArgs()` 读的是**同一个**
+`definition.parameters` ⇒ 剥了参数模型照样调，执行时校验必挂 ⇒ 那是制造错调，不是省 token。
+⇒ 正确形态 = 决策面**不带工具 schema、改带一份紧凑目录**；真正要执行的工具由执行面带完整 schema。
+
+### 3.5 `workflow` —— 批量子代理编排
 
 JS 脚本编排 subagent 群（`agent` / `pipeline` / `parallel` 钩子）。适合一次性大规模 fan-out
 （多文件审计 / 迁移 / 对抗验证）；单两次派发用 `subagent` 更省。
@@ -237,6 +261,8 @@ JS 脚本编排 subagent 群（`agent` / `pipeline` / `parallel` 钩子）。适
 │
 ├── 能力标签（内置 5 个）: literature / reader / reader-lead / literature-lead / ocr
 │   每个都含 describe_tools ⇒ Worker 能自查工具用途
+│   每个都含 explain_gate ⇒ Worker 能自查缺了什么、被谁裁的
+│   决策面另有「能力标签目录」(748B) ⇒ router 知道能派什么，不必背工具 schema
 │
 ├── 工具说明台账: annotations.json（自动标注 + 质量闸 + 面板补写）
 │
@@ -255,9 +281,11 @@ JS 脚本编排 subagent 群（`agent` / `pipeline` / `parallel` 钩子）。适
 | 4 个 preset 与其工具行 | 随包 `cordis.patch.yml` |
 | 底线条 40 件与其分组 | 随包 `config.default.json` + `host.v2.mjs` 的 `DEFAULT_BASELINE`（同源同值） |
 | 标签表 5 个与件数 | `host.v2.mjs` 的 `DEFAULT_CAPABILITIES` |
+| 能力标签目录的形态与体积 | `host.v2.mjs` 的 `buildCapabilityCatalog` / `CAPABILITY_PURPOSE`；落盘文件在 profile 目录 `capability-catalog.txt` |
 | 岗位引导原文 | 随包 `agents-briefs/*.md`（`_common.md` + 各角色段） |
 | 组装底线闸 | `host.v2.mjs` 的 `baseSet` / `dispatch_composed` 入口段 |
 | 兄弟无直连 | 宿主 `dsh-subagent/lib/index.js` 的 `sendMessage` 邻接校验 |
 
 **守门探针**：`scripts/probe-baseline-sync.mjs`（蓝本↔内置表同源同值）、
-`scripts/probe-baseline-gate.mjs`（底线闸）、`scripts/probe-annotations.mjs`（说明机制）。
+`scripts/probe-baseline-gate.mjs`（底线闸）、`scripts/probe-annotations.mjs`（说明机制）、
+`scripts/probe-capability-catalog.mjs`（能力标签目录）。

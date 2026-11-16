@@ -1,6 +1,9 @@
 # preset 工具面配方（Preset Tool Policy）—— 每 preset 一份配置
 
-> 状态：**设计草案 v0.3**（未实现）。待裁决项见 §9。
+> 状态：**主体已实现**（`preset_rules` 三通道于 v0.15.0 落地，0.16.x 线持续维护）。
+> 本文记录**设计依据与语义**（含当初的实测根因与盲审过程），**不是**待实现草案。
+> 仍未实现的部分只有一处：**档 2 的独立配置入口**（`preset_rules.exempt` 仍只认 `"auto"`）——
+> 详见 §3.6 与 `roadmap.md` 的 R5。
 > 取代 `tool-modules.md` v0.2 的「统一通道求值」路线（该路线已被四路盲审否决）。
 > 证据基线：2026-11-13/14 实测 + 源码核对 + 五路异构盲审（`<dev-workspace>/moa-runs/dtg-v03-review`）。
 
@@ -45,11 +48,12 @@
 
 ② syncLock(lock, known, cfg) 把 known 里所有没见过的新名一律建 pending
    ⇒ preset 自带工具全部落进 pending
-        证据: host.v2.mjs:356-374（新名 → state:"pending"）
+        证据: host.v2.mjs 的 `syncLock()`（新名 → state:"pending"）
 
 ③ pendingDeny() 无差别并入 deny 集
    ⇒ 域工具被自己的闸门杀掉
-        证据: host.v2.mjs:376-380、382-388（effectiveDeny = (baseline ∪ pending) − exempt ∪ extra）
+        证据: host.v2.mjs 的 `effectiveDeny()` 与 `pendingDenyFor()`
+              （effectiveDeny = (baseline ∪ pending) − exempt ∪ extra）
 ```
 
 **量化（生产 lock 409 件逐件统计）**：
@@ -413,7 +417,7 @@ golden(preset, depth) = { effective: string[], denied: string[], missing: string
 
 ---
 
-## 9. 用户裁决（2026-11-14 09:34 北京，已定）
+## 9. 用户裁决（2026-11-14 09:34 北京，已定，已落地）
 
 | 项 | 裁决 | 影响 |
 |---|---|---|
@@ -441,7 +445,7 @@ golden(preset, depth) = { effective: string[], denied: string[], missing: string
 | 子代（depth>0） | `effectiveDeny()` 里 `exempt = preset_allow[p]` —— 仅作 baseline/pending 的豁免过滤器 | 黑名单弱 |
 
 ⇒ 同一张表两种强度；且主会话的回落读**无告警地改变语义**
-（`host.v2.mjs:561` 回落 + `:566-568` 回落时 warn，但 warn 只在回落发生时报，
+（host.v2.mjs 的 `resolveMainAllow()` 回落 + 回落时 warn，但 warn 只在回落发生时报，
 配置里两键都存在时无法从外部判断主会话实际用的是哪张表）。
 
 ### 10.2 拆键设计

@@ -24,7 +24,7 @@ A DSH subagent inherits the main session's entire tool catalog and the full glob
 
 > **Quick start** — DSH ≥ 0.2.2-rc.1, Node ≥ 24.9.0. In your DSH profile directory (`~/.dsh/profiles/web`): `npm i dsh-depth-tool-gate`, then **append** `"dsh-depth-tool-gate"` to the `dsh.profile.bundles` array in that profile's `package.json`, restart DSH, and open **Settings → Subagent Tool Surface**. Full steps and prerequisites: [Install](#install).
 
-**Current version v0.13.2** · 中文说明见 [README.zh.md](README.zh.md) · 中文文档 `docs/*.md`
+**Current version v0.16.4** · 中文说明见 [README.zh.md](README.zh.md) · 中文文档 `docs/*.md`
 
 ---
 
@@ -142,7 +142,7 @@ Instead of loading the whole global instruction file into every subagent, each r
 
 A preset can mask named global system-prompt sections by registering same-named empty sections — the host's scoped-shadow mechanism then drops them entirely for that preset. A child that has no scheduling tools does not need the scheduling instructions.
 
-### 7. The panel (7 tabs)
+### 7. The panel (8 tabs)
 
 Settings → **Subagent Tool Surface** (子代理工具面):
 
@@ -152,6 +152,7 @@ Settings → **Subagent Tool Surface** (子代理工具面):
 | 🧭 主会话与访问 / Main session & access | Which presets may be dispatched at all; plus per-role denies for main sessions |
 | 👥 子代理按角色 / Subagents by role | The final deny surface per role, and the raw list editors |
 | 🧪 能力标签 / Capability tags | The tag → allow-list table used by `dispatch_composed` |
+| 📝 工具说明 / Tool annotations | The per-tool purpose ledger: how many annotations are on file, how many pass the quality gate, and the queue of tools still needing one — editable in place |
 | 📊 调用频率 / Call frequency | Per-tool and per-preset call counts, plus the most recent 40 sessions (per-session breakdown; older sessions drop out of the list) |
 | 📜 裁剪台账 / Audit ledger | One row per agent creation, plus red rows for governance events (lock corruption, config corruption, gate errors, missing briefs) |
 | 🚦 闸门与发现 / Gate & discovery | Pending rulings (four actions per tool), and a per-item reason for every stale list entry |
@@ -162,11 +163,47 @@ Settings → **Subagent Tool Surface** (子代理工具面):
 
 ```
 [explain_gate] 可见 99/116 | 裁 17 件
+  按归因汇总:
+    · main_deny(主会话显式名单) — 17 件
+  逐件明细:
   ✂ generate_image — main_deny(主会话显式名单)
   ✂ mcp__codex__codex — main_deny(主会话显式名单)
 ```
 
+The output has two layers: a **per-reason summary** (counts are never truncated — that is the complete answer to "what am I missing") and then the **per-tool detail** (up to 200 lines; if more remain it says so explicitly, rather than showing a short list under a larger count).
+
 (Each line names the list responsible for the cut. The reasons are mutually exclusive per scope: a **main session** can report `main_deny`, a **subagent** reports `baseline_deny` / `preset_extra_deny` / `preset_allow 正面清单外` / `lock pending`. Ask the agent in your session to run it, or call it from a tool-use turn. The counts above are illustrative; they depend on your own lists.)
+
+### 9. Per-tool purpose annotations (`describe_tools`)
+
+Every governed tool gets a **one-line statement of what it is for**, maintained automatically as tools are discovered:
+
+| Stage | Rule |
+|---|---|
+| **Discovered → annotated** | When a tool is first seen by the runtime (the same point the gate sees it), its `definition.description` is reduced to its first sentence → an annotation exists immediately |
+| **Stored in full** | The ledger keeps the **complete** description, not a truncated one. A short summary is derived only for the panel's list view and is never written back |
+| **Manual wins** | A note you write in the panel is never overwritten by the automatic pass; clearing it falls back to automatic |
+| **Quality gate** | Non-empty · ≥12 bytes · **information gain over the tool name** (the note must contain a real word besides the tool's own name). Failing tools land in a *needs annotation* queue |
+| **Model-side lookup** | `describe_tools` returns the **full** note on demand — `names` to ask about specific tools, `keyword` to find tools by what they do, neither to list the visible surface. It does **not** go into the system prompt, so it costs nothing when unused |
+
+> **Why the full description is kept.** Truncating a tool's description to a name-matching token destroys exactly the dimension that distinguishes tools — measured on the real session: 93 of 98 tools truncated, 31,297 bytes lost, and what was lost was the differentiating half of each note. A short note does not just save tokens; it suppresses tool availability and assignment precision.
+
+The ledger is **whole-registry** ("visible" is only a label), so a decision-facing agent can look up the notes of tools outside its own surface.
+
+### 10. The capability catalogue (a decision face does not need schemas)
+
+A router needs to know **which capabilities it can dispatch and what each one does** — not 19 tool schemas. The plugin therefore maintains a compact catalogue:
+
+```
+# 能力标签目录 (9 标签)
+- literature (26): 多库学术检索(8库+3引擎)+引文核验+文献抽取
+- reader (10): 网页与文件轻读(只读面, 不写不派)
+...
+```
+
+Measured on a real session: the main session carried **87,947 bytes** of tool definitions (40,811 descriptions + 47,136 parameters); the router face carried **21,029 bytes** and knew only 19 tool *names* — nothing about what those tools did. The catalogue covers the same ground in **748 bytes**.
+
+It is generated at **deploy time** and injected into decision-facing role briefs, because switching surfaces mid-session loses more than it saves (measured cache hit rate: 86.3%; break-even is ~16 turns, while the catalogue is re-sent a median of 4 times per session).
 
 ---
 
@@ -184,7 +221,7 @@ npm i dsh-depth-tool-gate
 ```jsonc
 {
   "dependencies": {
-    "dsh-depth-tool-gate": "^0.13.2"
+    "dsh-depth-tool-gate": "^0.16.4"
   },
   "dsh": {
     "profile": {
@@ -275,6 +312,8 @@ Key notes:
   | `ocr` | 11 | 2 |
   | `literature` | 24 | 15 |
   | `literature-lead` | 25 | 15 |
+
+  ★ These are the **built-in fallback** table, not a limit: the moment you define `capabilities` in your config, your table replaces it wholesale and the built-in one is never consulted again. A production profile commonly runs a wider table (nine tags: the five above plus `orchestrator`, `bio`, `web-report` and `router`).
 
   Every tag carries `describe_tools` (a read-only lookup of every governed tool's one-line purpose), so a composed agent can check what a tool actually does before calling it — **including orchestration tags** (`router`, `orchestrator`): a dispatcher that cannot see what the tools do cannot compose them reliably, so it needs the same lookup entry point as an executor.
 
