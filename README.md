@@ -24,7 +24,7 @@ A DSH subagent inherits the main session's entire tool catalog and the full glob
 
 > **Quick start** — DSH ≥ 0.2.2-rc.1, Node ≥ 24.9.0. In your DSH profile directory (`~/.dsh/profiles/web`): `npm i dsh-depth-tool-gate`, then **append** `"dsh-depth-tool-gate"` to the `dsh.profile.bundles` array in that profile's `package.json`, restart DSH, and open **Settings → Subagent Tool Surface**. Full steps and prerequisites: [Install](#install).
 
-**Current version v0.16.4** · 中文说明见 [README.zh.md](README.zh.md) · 中文文档 `docs/*.md`
+**Current version v0.16.5** · 中文说明见 [README.zh.md](README.zh.md) · 中文文档 `docs/*.md`
 
 ---
 
@@ -148,7 +148,7 @@ Settings → **Subagent Tool Surface** (子代理工具面):
 
 | Tab | What it does |
 |---|---|
-| 📋 全局工具面 / Global tool surface | Two collapsible columns: the configured deny list and the runtime-discovered tools not yet ruled on, with a source filter, a per-tool explainer, and a batch prompt generator for bulk decisions |
+| 📋 全局工具面 / Global tool surface | Two collapsible columns: the configured deny list and the runtime-discovered tools not yet ruled on. **Both layers are visible side by side** — every tool has two checkboxes (subagent deny / main-session deny), the group-level toggles are per-layer too, and the summary line breaks the main-session count down into "denied in both N / main-session only M"; with a source filter, a per-tool explainer, and a batch prompt generator for bulk decisions |
 | 🧭 主会话与访问 / Main session & access | Which presets may be dispatched at all; plus per-role denies for main sessions |
 | 👥 子代理按角色 / Subagents by role | The final deny surface per role, and the raw list editors |
 | 🧪 能力标签 / Capability tags | The tag → allow-list table used by `dispatch_composed` |
@@ -221,7 +221,7 @@ npm i dsh-depth-tool-gate
 ```jsonc
 {
   "dependencies": {
-    "dsh-depth-tool-gate": "^0.16.4"
+    "dsh-depth-tool-gate": "^0.16.5"
   },
   "dsh": {
     "profile": {

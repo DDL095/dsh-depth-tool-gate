@@ -24,7 +24,7 @@ DSH 的子代理默认继承主会话的**全部工具**与**全部全局引导*
 
 > **快速开始** —— 需 DSH ≥ 0.2.2-rc.1、Node ≥ 24.9.0。在你的 DSH profile 目录（`~/.dsh/profiles/web`）下执行 `npm i dsh-depth-tool-gate`，然后把 `"dsh-depth-tool-gate"` **追加**到该 profile `package.json` 的 `dsh.profile.bundles` 数组末尾，重启 DSH，打开 **设置 → 子代理工具面**。完整步骤与前置条件见 [安装](#安装)。
 
-**当前版本 v0.16.4** · English see [README.md](README.md) · 中文文档 `docs/*.md`
+**当前版本 v0.16.5** · English see [README.md](README.md) · 中文文档 `docs/*.md`
 
 ---
 
@@ -155,7 +155,7 @@ preset 可以在内部注册同名的空段，遮蔽全局提示里的同名段 
 
 | Tab | 作用 |
 |---|---|
-| 📋 全局工具面 | 两栏可折叠：已配的禁用名单 + 运行时发现但尚未裁决的工具；带来源筛选、逐件解读、以及批量裁决用的提示词生成器 |
+| 📋 全局工具面 | 两栏可折叠：已配的禁用名单 + 运行时发现但尚未裁决的工具；**两层并列可见**（每件工具两个勾选框：子代理禁 / 主会话禁，组级开关也分两层，摘要行给出「两层都禁 N · 仅主会话禁 M」的重叠分解）；带来源筛选、逐件解读、以及批量裁决用的提示词生成器 |
 | 🧭 主会话与访问 | 哪些 preset 可以被派发；以及主会话的岗位级禁用 |
 | 👥 子代理按角色 | 每个岗位的最终禁用面，以及原始名单编辑器 |
 | 🧪 能力标签 | `dispatch_composed` 用的 标签 → allow 名单 表 |
@@ -237,7 +237,7 @@ npm i dsh-depth-tool-gate
 ```jsonc
 {
   "dependencies": {
-    "dsh-depth-tool-gate": "^0.16.4"
+    "dsh-depth-tool-gate": "^0.16.5"
   },
   "dsh": {
     "profile": {
