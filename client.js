@@ -264,7 +264,13 @@ window.__ModuleLoader__.load({
 		} else if (el) { el.focus(); el.select(); notify("⚠ 当前环境不支持剪贴板 API, 已全选——请 Ctrl+C 手动复制"); }
 	}
 	const FOLD_KEY = "dtg.panel.fold";
-	function loadFold() { try { return { ruled: true, discovered: false, ...(JSON.parse(localStorage.getItem(FOLD_KEY) || "{}")) }; } catch { return { ruled: true, discovered: false }; } }
+	/* ★ [v0.16.7] 两层明细折叠态(ruledBase/ruledMain)。命名与既有约定一致:
+	 *   **true = 收起** ⇒ 默认收起, 一屏不拉满; 渲染条件一律 !fold.ruledXxx。
+	 *   ★ 旧的 ruled(总折叠)键已废 —— 旧形态是三层嵌套, 层级过深。 */
+	/* ★ [v0.16.7] 两层明细折叠态(ruledBase/ruledMain) + Tab🧭 两块的一级折叠态
+	 *   (ruledMainAccess=preset 访问控制 / ruledMainRole=主会话按角色禁用)。
+	 *   命名与既有约定一致: **true = 收起** ⇒ 默认收起, 一屏不拉满。 */
+	function loadFold() { try { return { ruledBase: true, ruledMain: true, ruledMainAccess: true, ruledMainRole: true, discovered: false, ...(JSON.parse(localStorage.getItem(FOLD_KEY) || "{}")) }; } catch { return { ruledBase: true, ruledMain: true, ruledMainAccess: true, ruledMainRole: true, discovered: false }; } }
 		/* [v0.11] 本地时间显示(存储恒为 UTC ISO, 展示侧换算用户本地时区) */
 		function fmtLocal(iso) {
 			const d = new Date(iso);
@@ -646,71 +652,80 @@ window.__ModuleLoader__.load({
 			};
 
 			/* ── 上栏: 已裁决面(config 硬名单, 分组表; 失效/forced 徽标) ──
-			 * ★ [v0.16.5 修·用户报告 2026-11-16] 本表此前**只渲染 baseline 一层**
-			 *   (表头只有一个"禁用"), 而 main_deny 的件也列在同一张「已禁用清单」里
-			 *   ⇒ 用户在勾选框上看到**未勾选**, 以为"没禁", 实际主会话侧已被裁
-			 *   ⇒ 状态不可解释(治理的第一铁律: 执行必须可解释)。
-			 *   修法: 本表**两层并列**(子代理禁 / 主会话禁), 与「未裁决工具」区、
-			 *   「🟢 常用件」区的两层勾选**同构** —— 同一件在哪都能看清它在哪层被禁。
-			 *   ★ 判别力要求: 断言必须断「main_deny 的件在本表里能勾上/能显示已禁」,
-			 *     而非断"表头出现主会话禁字样"(那种断言零判别力)。 */
-			const renderRuledTable = (forPreset) => {
-				const activeSet = forPreset ? effectiveDenySet : denySet;
+			 * ★ [v0.16.7 重构·用户报告] 本函数改为**单层**渲染器 —— 每个实例只管
+			 *   一层(子代理禁 / 主会话禁), 由上层渲染成**两个一级折叠区**。
+			 *
+			 * ★★ v0.16.5 的双层同表形态有**真缺陷**(实测): 两层各带一个兜底组,
+			 *   而两个兜底池(baseline_deny \ 已分组 / main_deny \ 已分组) **会交叉** ——
+			 *   生产实测 14 件同时落进两个兜底组(那批未注册 MCP server 的工具:
+			 *   codex / gemini-cli / gemini-review / llm-chat / llm_chat / minimax-chat)
+			 *   ⇒ **同一件在表里渲染两遍**, 且两处勾选态来自不同层 ⇒ 状态打架。
+			 *   ⇒ 拆成两个独立区后, 每件工具在**每层各出现一次**, 层间不交叉。
+			 *
+			 * ★ 两层各自成区的好处(也正是用户提的形态):
+			 *   ① 层语义彻底分开 —— 左区只讲「子代理禁」, 右区只讲「主会话禁」;
+			 *   ② 每层有自己的组级开关与计数, 不用在一张表里对两列;
+			 *   ③ 一层禁某件、另一层不禁 ⇒ 在两个区里各自独立可见, 不会互相遮蔽。
+			 */
+			const renderRuledTable = (forPreset, layer) => {
+				/* layer: "base" = 子代理禁层 | "main" = 主会话禁层 | undefined = preset 页(单层语义) */
+				const isMain = layer === "main";
+				const activeSet = forPreset ? effectiveDenySet : (isMain ? mainDenySet : denySet);
 				const tableGroups = forPreset ? presetGroups : groups;
-				/* ★ [v0.16.5] 两层的**兜底池不同**: baseline 兜底 = baseline_deny 中未分组的件;
-			 *   main 兜底 = main_deny 中未分组的件(可能与 baseline 兜底不同集)。
-			 *   两层各自成组 ⇒ main-only 件不会被 baseline 兜底组"吞掉"而不可见。
-			 *   (生产实测: main_deny 17 件中 2 件是 main-only, 旧表里它们不可见。) */
-				const extraBase = draft.baseline_deny.filter((n) => !groupedNames.has(n));
-				const extraMain = draft.main_deny.filter((n) => !groupedNames.has(n));
-				/* ★ [v0.16.0 MoA 盲审 P1 修] else 分支必须用 **tableGroups**, 不是 groups。
-				 *   缺陷: forPreset=true(preset 页)时, 原写法落到外层 `groups`
-				 *   ⇒ 丢掉了 presetGroups 的「➕ 其他额外禁用」兜底组
-				 *   ⇒ 该角色 extra_deny 加入、未归入固定分组的工具**整组不渲染**
-				 *   ⇒ 用户在 preset 页看不到那些件的禁用状态(状态不可见 = 不可解释)。
-				 *   (probe-client-groups 的 C3 只查「无裸 GROUPS 引用」, 对本项零判别力。) */
+				/* ★ 本层的配置名单(兜底组只收**本层**的件 ⇒ 两层池天然不交叉) */
+				const layerNames = isMain ? (draft.main_deny || []) : (draft.baseline_deny || []);
+				const extra = layerNames.filter((n) => !groupedNames.has(n));
 				let shown = tableGroups;
 				if (!forPreset) {
 					shown = tableGroups.slice();
-					if (extraBase.length) shown = shown.concat({ key: "_cfg_extra_base", title: `➕ 配置内未分组·子代理禁(${extraBase.length})`, names: extraBase, note: "baseline_deny 中不属于任何固定分组的条目" });
-					if (extraMain.length) shown = shown.concat({ key: "_cfg_extra_main", title: `➕ 配置内未分组·主会话禁(${extraMain.length})`, names: extraMain, note: "main_deny 中不属于任何固定分组的条目" });
+					if (extra.length) shown = shown.concat({
+						key: isMain ? "_cfg_extra_main" : "_cfg_extra_base",
+						title: `➕ 配置内未分组(${extra.length})`,
+						names: extra,
+						note: isMain
+							? "main_deny 中不属于任何固定分组的条目(未注册/已改名的工具会落这里)"
+							: "baseline_deny 中不属于任何固定分组的条目(未注册/已改名的工具会落这里)",
+					});
 				}
-				/* ★ [v0.16.5] preset 页(子代理按角色)是**单层**语义(该角色的最终禁用面),
-			 *   没有"主会话禁"这一层 ⇒ 两层表头只在全局页出现。
-			 *   判定: forPreset=true ⇒ 单列(沿用旧形态), 否则双列。 */
 				const twoLayer = !forPreset;
 				return h("table", { style: { borderCollapse: "collapse", width: "100%" } },
 					h("thead", null, h("tr", null,
 						h("th", { style: th }, "组"),
-						twoLayer ? h("th", { style: th }, "子代理禁") : h("th", { style: th }, "禁用"),
-						twoLayer ? h("th", { style: th }, "主会话禁") : null,
+						twoLayer ? h("th", { style: th }, isMain ? "主会话禁" : "子代理禁") : h("th", { style: th }, "禁用"),
 						h("th", { style: th }, "名单(配置清单)"), h("th", { style: th }, "理由"))),
 					h("tbody", null, shown.map((g) => {
 						const members = groupMembers(g);
 						const onCount = members.filter((n) => activeSet.has(n)).length;
 						const allOn = members.length > 0 && onCount === members.length;
-						/* ★ [v0.16.5] 主会话层的组内计数/组级开关(与 baseline 层对称)。
-						 *   注意: 计数分母用 members.length(该组全体), 分子用 main_deny 命中数
-						 *   ⇒ 与 baseline 层读数方式一致(都是"该组里被禁了几件")。 */
-						const mainOnCount = twoLayer ? members.filter((n) => mainDenySet.has(n)).length : 0;
-						const mainAllOn = twoLayer && members.length > 0 && mainOnCount === members.length;
 						return h("tr", { key: g.key, style: { borderTop: "1px solid rgba(128,128,128,.2)" } },
 							h("td", { style: td }, g.title),
 							h("td", { style: td },
-								h("button", { disabled: forPreset && !selectedPreset, onClick: () => forPreset ? setDraft((d) => updatePresetRules(d, selectedPreset, members, !allOn)) : toggleGroup(g, !allOn), style: { fontSize: 11, padding: "2px 8px", cursor: "pointer" } }, allOn ? "全禁✓" : `${onCount}/${members.length}`)),
-							twoLayer ? h("td", { style: td },
-								h("button", { onClick: () => toggleGroupMain(g, !mainAllOn), title: "整组开关: 对之后创建/恢复的主会话隐藏", style: { fontSize: 11, padding: "2px 8px", cursor: "pointer" } }, mainAllOn ? "全禁✓" : `${mainOnCount}/${members.length}`)) : null,
+								h("button", {
+									disabled: forPreset && !selectedPreset,
+									onClick: () => forPreset
+										? setDraft((d) => updatePresetRules(d, selectedPreset, members, !allOn))
+										: (isMain ? toggleGroupMain(g, !allOn) : toggleGroup(g, !allOn)),
+									title: isMain ? "整组开关: 对之后创建/恢复的主会话隐藏" : "整组开关: 对之后创建/恢复的子代理隐藏",
+									style: { fontSize: 11, padding: "2px 8px", cursor: "pointer" },
+								}, allOn ? "全禁✓" : `${onCount}/${members.length}`)),
 							h("td", { style: { ...td, whiteSpace: "normal", maxWidth: 380 } },
-								members.map((n) => h("span", { key: n, title: originOf(n).join(" — "), style: { display: "inline-flex", alignItems: "center", gap: 3, marginRight: 8, fontSize: 11, opacity: activeSet.has(n) || (twoLayer && mainDenySet.has(n)) ? 1 : 0.45 } },
-									h("input", { type: "checkbox", disabled: forPreset && !selectedPreset, checked: activeSet.has(n), onChange: () => forPreset ? setDraft((d) => updatePresetRules(d, selectedPreset, [n], !activeSet.has(n))) : toggleName(n) }),
-									twoLayer ? h("input", { type: "checkbox", checked: mainDenySet.has(n), onChange: () => toggleMain(n), title: "勾选=入 main_deny: 之后创建/恢复的主会话不可见(子代理不受影响)" }) : null,
+								members.map((n) => h("span", { key: n, title: originOf(n).join(" — "), style: { display: "inline-flex", alignItems: "center", gap: 3, marginRight: 8, fontSize: 11, opacity: activeSet.has(n) ? 1 : 0.45 } },
+									h("input", {
+										type: "checkbox",
+										disabled: forPreset && !selectedPreset,
+										checked: activeSet.has(n),
+										onChange: () => forPreset
+											? setDraft((d) => updatePresetRules(d, selectedPreset, [n], !activeSet.has(n)))
+											: (isMain ? toggleMain(n) : toggleName(n)),
+										title: isMain ? "勾选=入 main_deny: 之后创建/恢复的主会话不可见(子代理不受影响)" : "勾选=入 baseline_deny: 之后创建/恢复的子代理不可见(可按角色豁免)",
+									}),
 									h("code", null, n), badge(n),
 								h("button", { onClick: () => setPromptBox({ title: n + " 解读", text: buildAdjudicationPrompt([n], "已裁决件复看(当前在禁用清单内)") }), title: "生成解读提示词", style: { fontSize: 10, padding: "0 4px", cursor: "pointer", border: "none", background: "transparent", color: "inherit", opacity: 0.55 } }, "🔍"))),
 							h("td", { style: { ...td, opacity: 0.7, whiteSpace: "normal", maxWidth: 240 } }, g.note)));
 					})));
 			};
 
-			/* ── 下栏: 未裁决工具(运行时快照; 两层独立勾选 + 解读提示词) ── */
+/* ── 下栏: 未裁决工具(运行时快照; 两层独立勾选 + 解读提示词) ── */
 		const renderDiscovered = () => {
 			if (!snap) return h("div", { style: { opacity: 0.6, fontSize: 12, padding: 8 } }, "未裁决面不可用(host snapshot 未就绪——插件为旧版或工具服务不可见; 点上方 ↻ 刷新重试)");
 			const ruledAll = new Set([...denySet, ...Object.values(draft.preset_extra_deny || {}).flat()]);
@@ -789,13 +804,31 @@ window.__ModuleLoader__.load({
 
 				/* ── Tab1 [v0.10]: 双栏可折叠(上=已禁用配置, 下=未裁决快照) + 层级图例 ── */
 				tab === "groups" && h("div", null,
-					h("div", { style: { background: "rgba(106,170,255,.05)", border: "1px solid rgba(106,170,255,.15)", borderRadius: 6, marginBottom: 10 } },
-						h("button", { onClick: () => toggleFold("ruled"), "aria-expanded": !fold.ruled, style: { background: "transparent", border: "none", color: "inherit", font: "inherit", textAlign: "left", cursor: "pointer", display: "flex", alignItems: "center", gap: 8, width: "100%", padding: 8, boxSizing: "border-box", fontSize: 12 } },
-							h("b", null, fold.ruled ? "▸" : "▾", " 已禁用清单(配置)"),
-							h("span", { style: { fontSize: 11, opacity: 0.65 } }, "子代理禁 " + draft.baseline_deny.length + " · 主会话禁 " + draft.main_deny.length + " (其中两层都禁 " + bothSet.size + " · 仅主会话禁 " + mainOnlySet.size + ")" + " · 待裁决 " + ((snap && snap.pending) || []).length + " — 点此" + (fold.ruled ? "展开" : "收起"))),
-						!fold.ruled && h("div", { style: { padding: "0 8px 8px" } },
-							h("p", { style: { fontSize: 11, opacity: 0.65, margin: "0 0 6px" } }, "配置名单(保存落盘, 失效条目保留不清理); 每件工具**两个勾选框 = 两层独立禁用**: 左框=「子代理禁」(对之后创建/恢复的子代理不可见), 右框=「主会话禁」(对之后创建/恢复的主会话不可见, 子代理不受影响); 两框都勾=两层都禁, 都不勾=两层都可见。悬停工具名看来源。⚠=失效残留 🔒=preset-scoped 无法关闭 🆕=待裁决"),
-							renderRuledTable(false))),
+					/* ★ [v0.16.7 重构·用户建议] 已禁用清单做成**两个一级折叠区**
+					 *   (与「未裁决工具」平级, 不是"总折叠+两个子区"的三层嵌套):
+					 *     ① ⛔ 已禁用清单(子代理禁用)  ← baseline_deny
+					 *     ② 🧭 已禁用清单(主会话禁用)  ← main_deny
+					 *   三条实测理由:
+					 *   ① 层语义彻底分开: 旧形态一张表两列, 用户看不出禁的是哪一层;
+					 *   ② 消除 v0.16.5 的真缺陷: 两层的兜底组会交叉(生产实测 14 件)
+					 *      ⇒ 同一件渲染两遍、状态打架;
+					 *   ③ 两层交叉信息不丢 ⇒ 顶部保留一行总览(两层都禁 / 仅子代理禁 / 仅主会话禁)。 */
+					h("p", { style: { fontSize: 11, opacity: 0.65, margin: "0 0 6px" } },
+						"★ 两层**独立通道**: 子代理禁不影响主会话, 主会话禁也不影响子代理; 同一件工具在下面两个区里**各出现一次**(可只禁一层)。总览: 两层都禁 " + bothSet.size + " 件 · 仅子代理禁 " + (denySet.size - bothSet.size) + " 件 · 仅主会话禁 " + mainOnlySet.size + " 件。"),
+					h("div", { style: { background: "rgba(106,170,255,.05)", border: "1px solid rgba(106,170,255,.15)", borderRadius: 6, marginBottom: 8 } },
+						h("button", { onClick: () => toggleFold("ruledBase"), "aria-expanded": !fold.ruledBase, style: { background: "transparent", border: "none", color: "inherit", font: "inherit", textAlign: "left", cursor: "pointer", display: "flex", alignItems: "center", gap: 8, width: "100%", padding: 8, boxSizing: "border-box", fontSize: 12 } },
+							h("b", null, fold.ruledBase ? "▸" : "▾", " 已禁用清单(子代理禁用)"),
+							h("span", { style: { fontSize: 11, opacity: 0.65 } }, draft.baseline_deny.length + " 件 · 对之后创建/恢复的**子代理**不可见(可按角色豁免; 见「子代理按角色」页) — 点此" + (fold.ruledBase ? "展开" : "收起"))),
+						!fold.ruledBase && h("div", { style: { padding: "0 8px 8px" } },
+							h("p", { style: { fontSize: 11, opacity: 0.65, margin: "0 0 6px" } }, "配置名单(保存落盘, 失效条目保留不清理); 勾选=入 baseline_deny, 取消勾选即解除。★ 未注册/已改名的工具会落进「➕ 配置内未分组」兜底组(配置保留, 重装即复效)。悬停工具名看来源。⚠=失效残留 🔒=preset-scoped 无法关闭 🆕=待裁决"),
+							renderRuledTable(false, "base"))),
+					h("div", { style: { background: "rgba(232,163,61,.05)", border: "1px solid rgba(232,163,61,.2)", borderRadius: 6, marginBottom: 10 } },
+						h("button", { onClick: () => toggleFold("ruledMain"), "aria-expanded": !fold.ruledMain, style: { background: "transparent", border: "none", color: "inherit", font: "inherit", textAlign: "left", cursor: "pointer", display: "flex", alignItems: "center", gap: 8, width: "100%", padding: 8, boxSizing: "border-box", fontSize: 12 } },
+							h("b", null, fold.ruledMain ? "▸" : "▾", " 已禁用清单(主会话禁用)"),
+							h("span", { style: { fontSize: 11, opacity: 0.65 } }, draft.main_deny.length + " 件 · 对之后创建/恢复的**主会话**不可见(**子代理不受影响**; 核心能力也照裁, 只提示) — 点此" + (fold.ruledMain ? "展开" : "收起"))),
+						!fold.ruledMain && h("div", { style: { padding: "0 8px 8px" } },
+							h("p", { style: { fontSize: 11, opacity: 0.65, margin: "0 0 6px" } }, "配置名单(保存落盘, 失效条目保留不清理); 勾选=入 main_deny, 取消勾选即解除。★ 与「子代理禁用」是**两个独立通道**, 互不影响。"),
+							renderRuledTable(false, "main"))),
 					h("div", { style: { background: "rgba(120,200,120,.05)", border: "1px solid rgba(120,200,120,.15)", borderRadius: 6 } },
 						h("button", { onClick: () => toggleFold("discovered"), "aria-expanded": !fold.discovered, style: { background: "transparent", border: "none", color: "inherit", font: "inherit", textAlign: "left", cursor: "pointer", display: "flex", alignItems: "center", gap: 8, width: "100%", padding: 8, boxSizing: "border-box", fontSize: 12 } },
 							h("b", null, fold.discovered ? "▸" : "▾", " 未裁决工具(运行时快照)"),
@@ -978,6 +1011,29 @@ window.__ModuleLoader__.load({
 							h("span", { style: { fontSize: 12 } }, `当前来源: ${capsCustom ? "自定义表(config.capabilities, 整体覆盖内置)" : "内置缺省(DEFAULT_CAPABILITIES)"} · ${Object.keys(capsDisplay).length} 个标签`),
 							capsCustom || draft?.capabilities === null ? h("button", { onClick: () => setDraft((d) => ({ ...d, capabilities: null })), title: "保存后清掉 config 键, 恢复随插件内置标签", style: { padding: "3px 10px", fontSize: 11, cursor: "pointer" } }, "↺ 恢复内置(待保存)") : null),
 						h("div", { style: { marginTop: 4, fontSize: 11, opacity: 0.75 } }, "⚠ 保存自定义表后整体覆盖内置(未来插件新增标签不再自动出现; 恢复内置可回退)。名单含 dispatch_composed 的标签(lead 系)=子代可再派一级孙代。")),
+					/* ★ [v0.16.7] 补「来源与自动生成」说明(用户问: 能力标签是自动生成还是手动?
+					 *   其他用户如何自动看到相应内容?)
+					 *   事实依据(2026-11-16 核实 host.v2.mjs / role-briefs.mjs):
+					 *     ① 标签表来源 = 内置缺省 DEFAULT_CAPABILITIES(host 常量, 随插件发布)
+					 *        或用户自定义表 config.capabilities(整体覆盖内置);
+					 *     ② 决策面目录 = **自动生成**: host 启动时
+					 *        writeCapabilityCatalog(buildCapabilityCatalog(readConfig())) 落盘
+					 *        profile 目录 capability-catalog.txt; 面板拉取 capabilityCatalog() 时也重生成(热生效);
+					 *     ③ 注入范围 = 只给 DECISION_BRIEFS 白名单里的 cordis-router(role-briefs.mjs);
+					 *     ④ 别人装上插件 ⇒ 同一份内置缺省自动生效 ⇒ 无需任何手工配置。 */
+					h("details", { style: { marginTop: 8 } },
+						h("summary", { style: { cursor: "pointer", fontSize: 11, opacity: 0.8 } }, "❓ 能力标签从哪来? 其他用户怎么自动看到?"),
+						h("div", { style: { fontSize: 11, opacity: 0.75, lineHeight: 1.7, marginTop: 6 } },
+							h("b", null, "一、标签表 = 插件自带的内置缺省(自动)"),
+							h("div", { style: { marginLeft: 12 } },
+								h("div", null, "· 缺省标签表写在插件里(host 侧 DEFAULT_CAPABILITIES 常量), 随插件一起发布 ⇒ **别人装上插件就有, 不需要任何手工配置**。"),
+								h("div", null, "· 本页「当前来源: 内置缺省」即表示你此刻用的是它; 一旦你在面板上编辑并保存, 就切成**自定义表**(config.capabilities), 整体覆盖内置(插件日后新增的标签不会自动出现, 可点「恢复内置」回退)。"),
+								h("div", null, "· 只有当**你本机装的工具集**与内置清单不一致(比如没装某个 MCP server)时, 才需要按自己的工具名自定义一份。")),
+							h("b", { style: { display: "block", marginTop: 6 } }, "二、决策面目录 = 自动生成并落盘(热生效)"),
+							h("div", { style: { marginLeft: 12 } },
+								h("div", null, "· host 在启动时按**当前生效配置**生成一份紧凑目录(每个标签: 名称 + 件数 + 一句用途), 落盘到 profile 目录的 capability-catalog.txt。"),
+								h("div", null, "· 面板点「刷新」也会重新生成 ⇒ 你改了标签表, 目录**立即**跟着变(热生效, 不用重启)。"),
+								h("div", null, "· 目录注入给**决策面角色**(当前只有 cordis-router)—— 决策面不需要几十份工具 schema, 只需要知道「能派哪些能力、每个能干什么」; 执行面自己带完整 schema。")))),
 					/* [v0.16.0 §2] 决策面目录(实际注入 brief 的那份)—— 让用户看见
 					 * 「决策面到底知道哪些能力」, 并给出体积账(对比工具 schema 的代价)。 */
 					h("details", { style: { marginBottom: 10 } },
@@ -1020,45 +1076,69 @@ window.__ModuleLoader__.load({
 						h("button", { disabled: !newCap.trim() || capsDisplay[newCap.trim()], onClick: () => { const k = newCap.trim(); if (k && !capsDisplay[k]) { editCaps((c) => { c[k] = []; }); setNewCap(""); } }, style: { padding: "5px 14px", fontSize: 12, cursor: "pointer" } }, "➕ 新增标签(空面)"))),
 				/* ── Tab🧭 [v0.11]: preset 访问控制(主功能) + 主会话按角色禁用 ── */
 				tab === "main" && h("div", null,
-					h("div", { style: { background: "rgba(232,163,61,.06)", border: "1px solid rgba(232,163,61,.2)", borderRadius: 6, padding: 8 } },
-						h("b", { style: { fontSize: 12 } }, "⛔ preset 访问控制 — 谁可以被派单为子代"),
-						h("span", { style: { fontSize: 11, opacity: 0.65, marginLeft: 8 } }, `勾选的 preset 不允许作为子代被派单(创建即限制到最小回报面+台账); 当前 ${draft.preset_deny.length} 个`),
-						h("div", { style: { marginTop: 8, display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))", gap: 4 } },
-							presetOptions.filter((p2) => p2.id !== "__custom").map((p2) => {
-								const on = draft.preset_deny.includes(p2.id);
-								return h("label", { key: p2.id, style: { display: "flex", alignItems: "center", gap: 6, fontSize: 12, cursor: "pointer", opacity: on ? 1 : 0.7 } },
-									h("input", { type: "checkbox", checked: on, onChange: () => setDraft((d) => ({ ...d, preset_deny: on ? d.preset_deny.filter((x) => x !== p2.id) : [...d.preset_deny, p2.id] })) }),
-									p2.name && p2.name !== p2.id ? `${p2.name} (${p2.id})` : p2.id);
-							})),
-						h("p", { style: { fontSize: 11, opacity: 0.75, marginTop: 6 } }, "depth0 手开会话不受限(限制的是派单链); list_agent_presets 枚举同步隐藏。")),
-					h("div", { style: { background: "rgba(106,170,255,.05)", border: "1px solid rgba(106,170,255,.15)", borderRadius: 6, padding: 8, marginTop: 10 } },
-						h("b", { style: { fontSize: 12 } }, "🧭 主会话按角色禁用(main_preset_extra_deny)"),
-						h("span", { style: { fontSize: 11, opacity: 0.65, marginLeft: 8 } }, "手开【该 preset】的主会话 = main_deny 之上叠加勾选; 子代不受此表影响(子代在「子代理按角色」页)"),
-						h("div", { style: { display: "flex", alignItems: "center", gap: 8, margin: "8px 0", flexWrap: "wrap" } },
-							h("span", { style: { fontSize: 12 } }, "角色:"),
-							h("select", { value: effMainRoleChoice, onChange: (e) => setMainRoleChoice(e.target.value), style: { minWidth: 240, padding: "5px 8px", fontSize: 12 } },
-								presetOptions.filter((p2) => p2.id !== "__custom").map((p2) => h("option", { key: p2.id, value: p2.id }, p2.name && p2.name !== p2.id ? `${p2.name} (${p2.id})` : p2.id))),
-							h("span", { style: { fontSize: 11, opacity: 0.7 } }, `当前叠加 ${mainRoleSet.size} 项`)),
-						groups.map((g) => {
-							const members = groupMembers(g);
-							const onCount = members.filter((n) => mainRoleSet.has(n)).length;
-							return h("div", { key: g.key, style: { borderTop: "1px solid rgba(128,128,128,.15)", padding: "4px 0" } },
-								h("div", { style: { fontSize: 11, opacity: 0.7 } }, g.title, onCount ? ` — 已叠加 ${onCount}` : ""),
+					/* ★ [v0.16.7] 两块各做成**一级折叠区**(与 Tab📋 的折叠区同形态),
+					 *   并各自补上**生效逻辑**说明(此前只有一句结论, 没讲清怎么生效)。 */
+					h("div", { style: { background: "rgba(232,163,61,.06)", border: "1px solid rgba(232,163,61,.2)", borderRadius: 6, marginBottom: 10 } },
+						h("button", { onClick: () => toggleFold("ruledMainAccess"), "aria-expanded": !fold.ruledMainAccess, style: { background: "transparent", border: "none", color: "inherit", font: "inherit", textAlign: "left", cursor: "pointer", display: "flex", alignItems: "center", gap: 8, width: "100%", padding: 8, boxSizing: "border-box", fontSize: 12 } },
+							h("b", null, fold.ruledMainAccess ? "▸" : "▾", " ⛔ preset 访问控制 — 谁可以被派单为子代"),
+							h("span", { style: { fontSize: 11, opacity: 0.65 } }, "当前禁用 " + draft.preset_deny.length + " 个 — 点此" + (fold.ruledMainAccess ? "展开" : "收起"))),
+						!fold.ruledMainAccess && h("div", { style: { padding: "0 8px 8px" } },
+							/* ★ 生效逻辑(依据 host.v2.mjs 的 gateChild, 2026-11-16 核实):
+							 *   ① 生效时机 = **子代 agent 创建的那一刻**(agent/created 事件);
+							 *   ② 命中 preset_deny ⇒ tools.restrict({allow: 最小回报面}) = 只留
+							 *      note_search / send_message 两件(回报与通知必需);
+							 *   ③ fail-closed: 最小面不可用或 restrict 抛错 ⇒ 改为 deny 全部已知工具
+							 *      (台账带 degraded 标记)⇒ 被禁子代绝不保留完整面;
+							 *   ④ depth0 手开的主会话**不受限**(限制的是派单链);
+							 *   ⑤ list_agent_presets 枚举同步隐藏被禁 preset。 */
+							h("p", { style: { fontSize: 11, opacity: 0.75, margin: "0 0 6px" } }, "★ 生效逻辑: **子代创建的那一刻**判定(不是「派单时」)⇒ 命中名单的 preset 被 tools.restrict 到**最小回报面**(只留 note_search / send_message 两件回报与通知工具); 若最小面不可用或裁剪抛错 ⇒ **fail-closed** 改为裁掉全部已知工具(台账带 degraded 标记)⇒ 被禁子代绝不保留完整面。"),
+							h("p", { style: { fontSize: 11, opacity: 0.75, margin: "0 0 6px" } }, "★ 作用域: 只限**派单链** —— depth0 手开的主会话不受限; list_agent_presets 的枚举同步隐藏被禁 preset。"),
+							h("div", { style: { marginTop: 8, display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))", gap: 4 } },
+								presetOptions.filter((p2) => p2.id !== "__custom").map((p2) => {
+									const on = draft.preset_deny.includes(p2.id);
+									return h("label", { key: p2.id, style: { display: "flex", alignItems: "center", gap: 6, fontSize: 12, cursor: "pointer", opacity: on ? 1 : 0.7 } },
+										h("input", { type: "checkbox", checked: on, onChange: () => setDraft((d) => ({ ...d, preset_deny: on ? d.preset_deny.filter((x) => x !== p2.id) : [...d.preset_deny, p2.id] })) }),
+										p2.name && p2.name !== p2.id ? p2.name + " (" + p2.id + ")" : p2.id);
+								})))),
+					h("div", { style: { background: "rgba(106,170,255,.05)", border: "1px solid rgba(106,170,255,.15)", borderRadius: 6 } },
+						h("button", { onClick: () => toggleFold("ruledMainRole"), "aria-expanded": !fold.ruledMainRole, style: { background: "transparent", border: "none", color: "inherit", font: "inherit", textAlign: "left", cursor: "pointer", display: "flex", alignItems: "center", gap: 8, width: "100%", padding: 8, boxSizing: "border-box", fontSize: 12 } },
+							h("b", null, fold.ruledMainRole ? "▸" : "▾", " 🧭 主会话按角色禁用(main_preset_extra_deny)"),
+							h("span", { style: { fontSize: 11, opacity: 0.65 } }, "当前角色 " + (effMainRoleChoice || "(未选)") + " · 叠加 " + mainRoleSet.size + " 项 — 点此" + (fold.ruledMainRole ? "展开" : "收起"))),
+						!fold.ruledMainRole && h("div", { style: { padding: "0 8px 8px" } },
+							/* ★ 生效逻辑(依据 host.v2.mjs 的 gateMain, 2026-11-16 核实):
+							 *   ① 生效时机 = **主会话创建/恢复的那一刻**;
+							 *   ② 取值链 = main_preset_extra_deny[角色] 优先; 该键缺失或非数组时
+							 *      回落共用键 preset_extra_deny[角色](向后兼容);
+							 *   ③ 与 main_deny **叠加**(负面叠加制); 若该角色配了
+							 *      main_preset_allow(正面清单)⇒ 名单即全部, **不再叠加** main_deny;
+							 *   ④ 未配 main_preset_allow 时回落共用键 preset_allow[角色], 而该键在
+							 *      主会话侧是 **keep-only** 正面清单(与子代侧的「豁免」语义相反)
+							 *      ⇒ 台账记 allow-fallback 事件, 面板提示「建议拆分双语义键」;
+							 *   ⑤ 只作用于 **depth0 主会话**; 子代走另一套通道(「子代理按角色」页)。 */
+							h("p", { style: { fontSize: 11, opacity: 0.75, margin: "0 0 6px" } }, "★ 生效逻辑: **主会话创建/恢复的那一刻**判定 ⇒ 取 main_preset_extra_deny[角色](该键缺失时回落共用键 preset_extra_deny[角色])并与 main_deny **叠加**(负面叠加制); 若该角色配了 main_preset_allow(正面清单)⇒ 名单即全部, **不再叠加** main_deny。"),
+							h("p", { style: { fontSize: 11, opacity: 0.75, margin: "0 0 6px" } }, "★ 作用域: 只作用于 **depth0 主会话**; 子代不受此表影响(子代在「子代理按角色」页)。未配 main_preset_allow 时会回落共用键 preset_allow[角色], 而它在主会话侧是 keep-only 正面清单(与子代侧语义相反)⇒ 台账记 allow-fallback 事件, 建议用下方「拆分」消除双语义。"),
+							h("div", { style: { display: "flex", alignItems: "center", gap: 8, margin: "8px 0", flexWrap: "wrap" } },
+								h("span", { style: { fontSize: 12 } }, "角色:"),
+								h("select", { value: effMainRoleChoice, onChange: (e) => setMainRoleChoice(e.target.value), style: { minWidth: 240, padding: "5px 8px", fontSize: 12 } },
+									presetOptions.filter((p2) => p2.id !== "__custom").map((p2) => h("option", { key: p2.id, value: p2.id }, p2.name && p2.name !== p2.id ? p2.name + " (" + p2.id + ")" : p2.id))),
+								h("span", { style: { fontSize: 11, opacity: 0.7 } }, "当前叠加 " + mainRoleSet.size + " 项")),
+							groups.map((g) => {
+								const members = groupMembers(g);
+								const onCount = members.filter((n) => mainRoleSet.has(n)).length;
+								return h("div", { key: g.key, style: { borderTop: "1px solid rgba(128,128,128,.15)", padding: "4px 0" } },
+									h("div", { style: { fontSize: 11, opacity: 0.7 } }, g.title, onCount ? " — 已叠加 " + onCount : ""),
+									h("div", { style: { display: "flex", flexWrap: "wrap", gap: 2 } },
+										members.map((n) => h("label", { key: n, title: originOf(n).join(" — "), style: { display: "inline-flex", alignItems: "center", gap: 3, marginRight: 8, fontSize: 11, cursor: "pointer", opacity: mainRoleSet.has(n) ? 1 : 0.5 } },
+											h("input", { type: "checkbox", checked: mainRoleSet.has(n), onChange: () => toggleMainRole(n) }),
+											h("code", null, n)))));
+							}),
+							mainRoleExtra(effMainRoleChoice).length ? h("div", { key: "_main_extra", style: { borderTop: "1px solid rgba(128,128,128,.15)", padding: "4px 0" } },
+								h("div", { style: { fontSize: 11, opacity: 0.7 } }, "➕ 其他额外禁用(" + mainRoleExtra(effMainRoleChoice).length + ") — 未归入上方固定分组的工具"),
 								h("div", { style: { display: "flex", flexWrap: "wrap", gap: 2 } },
-									members.map((n) => h("label", { key: n, title: originOf(n).join(" — "), style: { display: "inline-flex", alignItems: "center", gap: 3, marginRight: 8, fontSize: 11, cursor: "pointer", opacity: mainRoleSet.has(n) ? 1 : 0.5 } },
+									mainRoleExtra(effMainRoleChoice).map((n) => h("label", { key: n, title: originOf(n).join(" — "), style: { display: "inline-flex", alignItems: "center", gap: 3, marginRight: 8, fontSize: 11, cursor: "pointer", opacity: mainRoleSet.has(n) ? 1 : 0.5 } },
 										h("input", { type: "checkbox", checked: mainRoleSet.has(n), onChange: () => toggleMainRole(n) }),
-										h("code", null, n)))));
-						}),
-						/* [v0.14.2 修] 兜底分组: 该角色叠加名单里不在任何固定分组的工具
-						 * (第三方插件工具如 dsh_im_*) —— 此前本页无兜底 ⇒ 它们不可见不可勾。 */
-						mainRoleExtra(effMainRoleChoice).length ? h("div", { key: "_main_extra", style: { borderTop: "1px solid rgba(128,128,128,.15)", padding: "4px 0" } },
-							h("div", { style: { fontSize: 11, opacity: 0.7 } }, `➕ 其他额外禁用(${mainRoleExtra(effMainRoleChoice).length}) — 未归入上方固定分组的工具`),
-							h("div", { style: { display: "flex", flexWrap: "wrap", gap: 2 } },
-								mainRoleExtra(effMainRoleChoice).map((n) => h("label", { key: n, title: originOf(n).join(" — "), style: { display: "inline-flex", alignItems: "center", gap: 3, marginRight: 8, fontSize: 11, cursor: "pointer", opacity: mainRoleSet.has(n) ? 1 : 0.5 } },
-									h("input", { type: "checkbox", checked: mainRoleSet.has(n), onChange: () => toggleMainRole(n) }),
-									h("code", null, n))))) : null,
-						h("p", { style: { fontSize: 11, opacity: 0.65, marginTop: 4 } }, "运行时新工具的全局层裁决在「全局工具面」下栏的「主会话禁」列; 本表只管按角色叠加。"),
-						h("details", { style: { marginTop: 8 } },
+										h("code", null, n))))) : null,
+							h("p", { style: { fontSize: 11, opacity: 0.65, marginTop: 4 } }, "运行时新工具的全局层裁决在「全局工具面」的「已禁用清单(主会话禁用)」区; 本表只管按角色叠加。"),
 							h("summary", { style: { cursor: "pointer", fontSize: 11, opacity: 0.75 } }, "高级: 正面清单(main_preset_allow)与原始 JSON"),
 							h("p", { style: { fontSize: 11, opacity: 0.7 } }, "main_preset_allow[角色]=正面清单制(名单即全部, 不再叠加 main_deny); 留空则用负面叠加制。"),
 							h("textarea", { value: JSON.stringify(draft.main_preset_allow, null, 1), onChange: (e) => { try { setDraft((d) => ({ ...d, main_preset_allow: JSON.parse(e.target.value) })); } catch { /* 编辑中 */ } }, onBlur: (e) => { try { setDraft((d) => ({ ...d, main_preset_allow: JSON.parse(e.target.value) })); } catch { setMsg("main_preset_allow 不是合法 JSON"); } }, style: { width: "100%", minHeight: 80, fontFamily: "monospace", fontSize: 11, padding: 6, boxSizing: "border-box" } }),
