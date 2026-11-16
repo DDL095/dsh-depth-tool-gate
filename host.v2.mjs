@@ -2534,6 +2534,20 @@ export function apply(ctx) {
 	/* [v0.14.0 P2] 启动即检查台账体积: 超阈值立即归档(不必等 64 次写才触发)。 */
 	try { rotateAuditIfNeeded(); } catch { /* 归档失败已在内部告警 */ }
 
+	/* ★★ [v0.16.10 修·可观测性] 启动期打**版本标记** —— 为什么必须加这一行:
+	 *   缺陷 A(snapshot() 的 ReferenceError)之所以能静默 3 天, 根因是
+	 *   「生产侧零痕迹」: host 的 catch 只 `return {ok:false, error}` **不落盘**
+	 *   ⇒ 日志里 grep 不到任何东西 ⇒ 只能靠「进程起于源码变更之前」这种**间接**判据
+	 *   (canary C1) ⇒ 而 C1 只说「应该没加载」, **不能证明「加载了哪一版」**。
+	 *   ⇒ 加一条**启动即打、含精确版本号**的标记:
+	 *     · 人工/脚本可精确 grep「宿主版本 0.16.10」判断跑的是哪一版;
+	 *     · canary 可断言「最近一次启动标记的版本 == 源仓 package.json 版本」
+	 *       ⇒ 把 C1 从**间接推断**升级为**直接判定**。
+	 *   ★ 判别力: 旧码**没有**这一行 ⇒ grep 不到 ⇒ 断言必红(不会假绿)。
+	 *   ★ 格式固定: `宿主版本 <ver>` —— 版本号取 PKG_VERSION(package.json 单一权威源)。
+	 */
+	log(`宿主版本 ${PKG_VERSION || "?"}`);
+
 	/* usageStats 采集器: tool/call 频率统计。
 	 * session/event 全局可达(同款模式): 全局 ctx.on 收所有会话(含子代)事件按
 	 * subject 自筛。O(1) Map 计数, 只记工具名与次数, 不落 arguments(敏感 + 体积);
