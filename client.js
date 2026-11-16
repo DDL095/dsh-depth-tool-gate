@@ -20,7 +20,7 @@
  *     与 README 两版里写版本号的既有做法完全同构。
  *   ★ 宿主那侧不写死: 直接读 host status 下发的 version(= host 自己的 package.json)。
  */
-const CLIENT_VERSION = "0.16.8";
+const CLIENT_VERSION = "0.16.9";
 
 window.__ModuleLoader__.load({
 	/* 模块注册 id 必须 == 包名(package.json 的 name): 宿主 arrive(row) 取
