@@ -888,7 +888,26 @@ window.__ModuleLoader__.load({
 							h("b", null, fold.ruledBase ? "▸" : "▾", " 已禁用清单(子代理禁用)"),
 							h("span", { style: { fontSize: 11, opacity: 0.65 } }, draft.baseline_deny.length + " 件 · 对之后创建/恢复的**子代理**不可见(可按角色豁免; 见「子代理按角色」页) — 点此" + (fold.ruledBase ? "展开" : "收起"))),
 						!fold.ruledBase && h("div", { style: { padding: "0 8px 8px" } },
-							h("p", { style: { fontSize: 11, opacity: 0.65, margin: "0 0 6px" } }, "配置名单(保存落盘, 失效条目保留不清理); 勾选=入 baseline_deny, 取消勾选即解除。★ 未注册/已改名的工具会落进「➕ 配置内未分组」兜底组(配置保留, 重装即复效)。悬停工具名看来源。⚠=失效残留 🔒=preset-scoped 无法关闭 🆕=待裁决"),
+							/* ★ [v0.16.10 修·用户报告] 补「取消勾选后它去哪」的**完整链路**。
+							 *   用户原文: 「我将一个 scout 的工具取消禁用了, 然后就发现在子代理这个页面中消失了」
+							 *   ★ 完整因果链(实算得出, 见 versions.md v0.16.10):
+							 *     ① 本区(兜底组)收的是「**配置名单里**、当前分组覆盖不到」的件;
+							 *     ② 取消勾选 ⇒ 该件**移出 baseline_deny 配置名单**
+							 *        ⇒ 它不再属于「配置内的件」⇒ **从本组消失**(正确语义, 非丢失);
+							 *     ③ 它本该回到下方「未裁决工具(运行时快照)」区(可见、可再勾选);
+							 *     ④ ★★ 但 v0.16.10 之前**运行时快照是坏的**(host 侧 ReferenceError)
+							 *        ⇒ 该区整段不渲染 ⇒ 取消后**没有任何别处显现**
+							 *        ⇒ 用户看到的就是「凭空消失」!
+							 *     ⇒ 本版起快照恢复正常 ⇒ ③成立 ⇒ 「移出本组 ⇒ 回未裁决区」可见可查。
+							 *   ⇒ 这条链路就是「34 件凭空多出来」与「取消即消失」的**同一个根因**。 */
+							h("p", { style: { fontSize: 11, opacity: 0.65, margin: "0 0 6px" } },
+								"配置名单(保存落盘, 失效条目保留不清理); 勾选=入 baseline_deny, 取消勾选即解除。",
+								h("br"),
+								"★ 「➕ 配置内未分组」= **配置名单里、当前分组覆盖不到**的件(未注册/已改名的工具会落这里; 配置保留, 重装即复效)。",
+								h("br"),
+								"★ 取消勾选 ⇒ 该件**移出配置名单** ⇒ 从本组消失(**不是丢失**): 它会回到下方「未裁决工具」区, 仍可见、可再勾选。",
+								h("br"),
+								"悬停工具名看来源。⚠=失效残留 🔒=preset-scoped 无法关闭 🆕=待裁决"),
 							renderRuledTable(false, "base"))),
 					h("div", { style: { background: "rgba(232,163,61,.05)", border: "1px solid rgba(232,163,61,.2)", borderRadius: 6, marginBottom: 10 } },
 						h("button", { onClick: () => toggleFold("ruledMain"), "aria-expanded": !fold.ruledMain, style: { background: "transparent", border: "none", color: "inherit", font: "inherit", textAlign: "left", cursor: "pointer", display: "flex", alignItems: "center", gap: 8, width: "100%", padding: 8, boxSizing: "border-box", fontSize: 12 } },
@@ -1034,7 +1053,23 @@ window.__ModuleLoader__.load({
 							if (!pool.length) return null;
 							return h("details", { style: { marginTop: 8 } },
 								h("summary", { style: { cursor: "pointer", fontSize: 12, opacity: 0.8 } }, `➕ 其他可按角色禁用的工具(${pool.length}) — 未归入上方分组, 且尚未被该角色禁用`),
-								h("div", { style: { fontSize: 11, opacity: 0.7, margin: "6px 0" } }, "★ 运行时真的可裁的全部工具(快照口径) —— 勾选=对该角色禁用(写入 preset_extra_deny; 若该件本就在全局底线里, 则改为在该角色**放行**); 未勾=继承全局。"),
+								h("div", { style: { fontSize: 11, opacity: 0.7, margin: "6px 0" } },
+									/* ★ [v0.16.10 修·用户报告] 说清「取消勾选后它去哪 / 本区收什么」。
+									 *   用户原文: 「我将一个 scout 的工具取消禁用了, 然后就发现在子代理这个页面中消失了」
+									 *   ★ 实算结论(host 侧 effectiveDeny 为执法权威, 客户端池子为展示口径):
+									 *     本区 = 「运行时可裁 ∧ 未归入上方分组 ∧ **该角色尚未禁**」的件
+									 *     (排除 effectiveDenySet = (base − allow) ∪ extra)。
+									 *     ⇒ 取消勾选 ⇒ 该件**变成该角色已禁** ⇒ 它**移出本区**,
+									 *       而它去了**上方表**: 若该件在 base 里 ⇒ 写 preset_allow(该角色放行),
+									 *       上方表按「禁用」列显示为未勾(该角色不再禁它);
+									 *       若不在 base 里 ⇒ 写 preset_extra_deny(该角色加裁) ⇒ 上方表「其他额外禁用」组收录它。
+									 *   ★ 关键: 它**没有丢失**, 只是从「候选区」移到了「已配置区」(上方表)。
+									 *   ★ 而用户当时看到的「消失」另有根因(已在 Tab1 说明): 快照坏了
+									 *     ⇒ 「未裁决工具」区整段不渲染 ⇒ 取消后没有别处可显现 ⇒ 像是凭空消失。
+									 *     本版起快照可用 ⇒ 该区正常渲染 ⇒ 「移出本区 = 转上方表」可见可查。 */
+									"★ 运行时真的可裁的全部工具(快照口径) —— 本区收「未归入上方分组、且**该角色尚未禁**」的件。勾选=对该角色禁用(写入 preset_extra_deny; 若该件本就在全局底线里, 则改为在该角色**放行**); 未勾=继承全局。",
+									h("br"),
+									"★ 取消勾选 ⇒ 该件**从本区移出**(不是丢失): 它转入上方表 —— 在全局底线里 ⇒ 记为该角色**放行**; 不在底线里 ⇒ 记为该角色**加裁**。"),
 								h("div", { style: { display: "flex", flexWrap: "wrap", gap: 2 } },
 									pool.map((n) => h("label", { key: n, title: originOf(n).join(" — "), style: { display: "inline-flex", alignItems: "center", gap: 3, marginRight: 8, fontSize: 11, cursor: "pointer", opacity: 0.8 } },
 										/* [v0.14.4 修·MoA 指正] 勾选态用 effectiveDenySet(该角色**最终禁用**态),
