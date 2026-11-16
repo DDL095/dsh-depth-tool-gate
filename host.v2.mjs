@@ -3211,6 +3211,16 @@ USAGE_TOTAL.set(name, (USAGE_TOTAL.get(name) || 0) + 1);
 				{ method: "usageStats", invocation: { kind: "direct" } },
 				{ method: "rule", invocation: { kind: "direct" } },
 				{ method: "lockInfo", invocation: { kind: "direct" } },
+				/* ★ [v0.16.4 修] 补暴露 4 个方法 —— 原先只暴露 7 个, 而 client 的 callGate
+				 *   调用 11 个 ⇒ `annotationsInfo` / `annotate` / `capabilityCatalog` /
+				 *   `splitAllow` **网关侧不存在** ⇒ client 落到 `throw new Error("未知 op")`
+				 *   ⇒ 面板「📝 工具说明」页(v0.16.0 头号新功能)**完全不可用**,
+				 *   人工补写说明**从未成功落过一次**(生产台账 `annotation-set` 实测 0 条)。
+				 *   ⇒ 这是**功能缺陷**, 不是文案问题。 */
+				{ method: "annotationsInfo", invocation: { kind: "direct" } },
+				{ method: "annotate", invocation: { kind: "direct" } },
+				{ method: "capabilityCatalog", invocation: { kind: "direct" } },
+				{ method: "splitAllow", invocation: { kind: "direct" } },
 			] } });
 			const pick = () => { try { const s = ctx.get("depthToolGate"); if (s && typeof s.status === "function") return s; } catch { /* 回落闭包 */ } return gateSvc; };
 			GateGateway.prototype.status = async () => { try { return pick().status(); } catch (e) { return { ok: false, error: String((e && e.message) || e) }; } };
@@ -3221,6 +3231,15 @@ USAGE_TOTAL.set(name, (USAGE_TOTAL.get(name) || 0) + 1);
 			GateGateway.prototype.usageStats = async () => { try { return pick().usageStats(); } catch (e) { return { ok: false, error: String((e && e.message) || e) }; } };
 			GateGateway.prototype.rule = async (names, action) => { try { return pick().rule(names, action); } catch (e) { return { ok: false, error: String((e && e.message) || e) }; } };
 			GateGateway.prototype.lockInfo = async () => { try { return pick().lockInfo(); } catch (e) { return { ok: false, error: String((e && e.message) || e) }; } };
+			/* ★ [v0.16.4 修] 补暴露 4 个方法(见上方 remote-methods 处的同款说明)。
+			 *   wire 契约: 方法源码参数名 = wire 字段(shim-panel 10-12 事故教训)
+			 *   ⇒ 参数名必须与 client 的 `callGate(op, arg)` 取字段名一致:
+			 *     annotationsInfo(arg?.topN) / annotate(arg?.name, arg?.note)
+			 *     capabilityCatalog() / splitAllow(selectedPreset) */
+			GateGateway.prototype.annotationsInfo = async (topN) => { try { return pick().annotationsInfo(topN); } catch (e) { return { ok: false, error: String((e && e.message) || e) }; } };
+			GateGateway.prototype.annotate = async (name, note) => { try { return pick().annotate(name, note); } catch (e) { return { ok: false, error: String((e && e.message) || e) }; } };
+			GateGateway.prototype.capabilityCatalog = async () => { try { return pick().capabilityCatalog(); } catch (e) { return { ok: false, error: String((e && e.message) || e) }; } };
+			GateGateway.prototype.splitAllow = async (preset) => { try { return pick().splitAllow(preset); } catch (e) { return { ok: false, error: String((e && e.message) || e) }; } };
 			const gw = new GateGateway(ctx);
 			log("remote 网关已挂载(depthToolGate → ctx.remote.depthToolGate)");
 			return () => { try { if (typeof gw.dispose === "function") gw.dispose(); } catch { /* noop */ } };

@@ -50,7 +50,7 @@ DSH 的子代理默认继承主会话的**全部工具**与**全部全局引导*
 全部动作都发生在 `agent/created` —— 宿主刚把 agent 创建完、还没开始干活的那一刻：
 
 1. **计算**：按下面六张名单算出这个 agent 的有效禁用集合；
-2. **分支**：判断该 agent 是否跑在挂了 `role-briefs` 的 preset 下 —— 这决定 `preset_allow` 是按"豁免"还是按"keep-only"生效；
+2. **分支**：按**深度**分支 —— 主会话（depth 0）与子代理（depth > 0）读不同的名单：主会话读 `main_deny` / `main_preset_*`，子代理读 `baseline_deny` ∪ `pending`，且 `preset_allow` 在子代理侧作**豁免集**；
 3. **执行**：用宿主的 `tools.restrict()` 施加结果，同时注入岗位引导与提示段遮蔽；
 4. **记账**：把这次决策写进台账 —— 裁没裁都写。
 
@@ -62,20 +62,25 @@ DSH 的子代理默认继承主会话的**全部工具**与**全部全局引导*
 
 `agent/created` 时按名单算出禁用集合，用宿主 `tools.restrict()` 强制裁剪。
 
-六张名单各有作用域。最微妙的是 `preset_allow` —— 它的效果**取决于该 agent 跑在哪个 preset 下**：
+六张名单各有作用域。最微妙的是 `preset_allow` —— 它的效果**取决于从哪一侧读**：
 
 | 名单 | 作用域 | 含义 |
 |---|---|---|
 | `baseline_deny` | 所有子代理（depth > 0） | 地板 —— 任何干活代理都不该有的工具 |
 | `preset_extra_deny[preset]` | 某个岗位 | 该岗位额外禁用的 |
-| `preset_allow[preset]` | 某个岗位 | 对**普通子代理**：豁免集 —— 这些名字从地板里减掉，其余照禁。对**挂了 `role-briefs` 模块的 preset**（随包三个都挂了）：**keep-only** 集 —— 该 agent 最终只剩这些工具 |
+| `preset_allow[preset]` | 某个岗位 | 对**子代理**：**豁免集** —— 这些名字从地板里减掉，其余照禁 |
 | `main_deny` | 主会话（depth 0） | 你自己都不想在自己会话里看到的工具 |
 | `main_preset_extra_deny[preset]` | 以该 preset 打开的主会话 | 叠在 `main_deny` 之上的岗位级禁用 |
 | `main_preset_allow[preset]` | 以该 preset 打开的主会话 | 该主会话的 **keep-only** —— 只留清单内的工具可见 |
 
-**普通子代理**的合成顺序：`baseline_deny` ∪ `pending` → 减去 `preset_allow[preset]` → 并上 `preset_extra_deny[preset]`。
+**子代理**的合成顺序：`baseline_deny` ∪ `pending` → 减去 `preset_allow[preset]` → 并上 `preset_extra_deny[preset]`。
 
-对挂了 `role-briefs` 的 preset，模块会在上述结果之上再把 `preset_allow[brief]` 当 keep-only 施加 —— 所以这些 preset 上该名单表现为 keep-only 而非豁免。这个双重行为是刻意的（手开的会话要与派出来的子代拿到同一个面），但代价是**同一个键在不同 preset 下含义不同**。
+> ★ **没有「挂了 `role-briefs` 就自动 keep-only」这条规则**。早期版本（v0.7.1）确实由引导模块
+> 把 `preset_allow[brief]` 当 keep-only 施加，但 **v0.14.5 已删除**：那份 restriction 写在
+> preset 的 **generation 层**（该 preset 下所有会话共享），且用**无参 view()** 取工具集
+> （只有全局层）⇒ router 可见面恒定塌成 6 件，主派单通道 `subagent` 一次都没露面。
+> 现在插件**只注入提示引导**，**裁剪权威一律在 host 侧**。
+> 子代理想要 keep-only 面，走**组装面**（`dispatch_composed`），不走 preset 名单。
 
 **主会话**：若命中正面清单则转 keep-only（且**不叠加** `main_deny`）；否则裁 `main_deny` ∪ `main_preset_extra_deny[preset]`。注意 `main_preset_allow` 未设时会**回落**到共用的 `preset_allow[preset]` 键 —— 而共用键在主会话路径上同样是 keep-only。插件在这种回落发生时会告警，你能在宿主日志里看到。
 
@@ -210,9 +215,10 @@ router 需要知道的是「**能派哪些能力、每个能干什么**」，而
 
 真实会话实测：主会话背着 **87,947 字节**工具定义（description 40,811 + parameter 47,136）；
 router 面背 **21,029 字节**且只知道 19 个工具**名字** —— 对这些工具能干什一概不知。
-目录用 **748 字节**覆盖同样的信息面。
+目录用 **753 字节**覆盖同样的信息面。
 
-目录在**部署期**静态生成，注入决策面角色的岗位引导 —— 因为会话内动态换面是亏本的
+目录在**部署期**静态生成，注入决策面角色的岗位引导（当前注入白名单**只含 `cordis-router`**
+一个角色）—— 因为会话内动态换面是亏本的
 （实测 cacheR 中位 86.3%，盈亏平衡约 16 轮，而目录每会话重发中位数仅 4 次）。
 
 ---

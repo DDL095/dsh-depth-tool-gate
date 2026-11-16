@@ -178,6 +178,11 @@ MCP server 一升级就得重抄 —— 这是不可持续的配置形态。
 | ② `exempt` | 豁免自动机制：`"auto"`=autoDenyNew 自动闸门（**本期只支持此值**） | 作用域受限 | 用户 |
 | ③ `allow` | 严格 keep-only 正面清单（**可选，默认不启用**） | 最强 | 用户（面板生成） |
 
+★ **③ 的作用域限定（源码级核实）**：`preset_rules.allow`（实现里的 `strictAllow`）
+**只在 `gateMain` 读取** ⇒ **当前仅主会话侧（depth 0）生效**。
+子代侧（depth > 0）的 `effectiveDeny()` **不读** `rules.allow`（只用 `rules.deny` 与
+`rules.exempt`）⇒ 子代侧配了 `allow` 会被**解析并保存**，但**不参与裁剪**。
+
 **三条通道互相独立**（盲审共识：不同语义不得合并进同一张表的不同解释）。
 
 ★ **与 `preset_allow` / `main_preset_allow` 的关系（裁决③ 后的边界划分）**：

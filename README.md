@@ -48,7 +48,7 @@ A DSH subagent inherits the main session's entire tool catalog and the full glob
 Everything happens on `agent/created` — the moment the host finishes creating an agent, before it starts working:
 
 1. **Compute** the effective deny set for that agent from the six policy lists below.
-2. **Branch** on whether the agent runs under a preset that mounts `role-briefs` — that decides whether `preset_allow` behaves as an exemption or as a keep-only list.
+2. **Branch** on depth — a main session (depth 0) and a subagent (depth > 0) read different lists: the main session reads `main_deny` / `main_preset_*`, a subagent reads `baseline_deny` ∪ `pending` with `preset_allow` acting as an exemption set.
 3. **Apply** the result through the host's `tools.restrict()` API, and inject the per-role brief and the prompt masking.
 4. **Log** the decision to the append-only ledger, whether or not anything was cut.
 
@@ -60,20 +60,20 @@ Everything happens on `agent/created` — the moment the host finishes creating 
 
 On `agent/created`, the plugin computes the effective deny list for that agent and applies it through the host's `tools.restrict()` API.
 
-Six lists, each with its own scope. The subtle one is `preset_allow`, because its effect depends on **which preset the agent runs under**:
+Six lists, each with its own scope. The subtle one is `preset_allow`, because its effect depends on **which side** it is read from:
 
 | List | Applies to | Meaning |
 |---|---|---|
 | `baseline_deny` | all subagents (depth > 0) | the floor — tools no worker should have |
 | `preset_extra_deny[preset]` | one role | additional denies for that role |
-| `preset_allow[preset]` | one role | for a **plain subagent**: an exemption list — these names are removed from the deny floor, everything else still gets denied. For a **preset that mounts the `role-briefs` module** (all three bundled presets do): a **keep-only** list — the agent ends up with exactly these tools |
+| `preset_allow[preset]` | one role | for a **subagent**: an **exemption list** — these names are removed from the deny floor, everything else still gets denied |
 | `main_deny` | the main session (depth 0) | tools you don't want in your own session either |
 | `main_preset_extra_deny[preset]` | a main session opened with that preset | role-specific denies layered on top of `main_deny` |
 | `main_preset_allow[preset]` | a main session opened with that preset | **keep-only** for that main session: only the listed tools stay visible |
 
-Order of application for a **plain subagent**: `baseline_deny` ∪ `pending` → minus `preset_allow[preset]` → plus `preset_extra_deny[preset]`.
+Order of application for a **subagent**: `baseline_deny` ∪ `pending` → minus `preset_allow[preset]` → plus `preset_extra_deny[preset]`.
 
-For an agent running under a preset that mounts `role-briefs`, the module applies `preset_allow[brief]` as a keep-only restriction on top of that — so for those presets the list behaves as keep-only rather than as an exemption. This dual behaviour is deliberate (it is how a hand-opened session ends up with the same surface as a delegated one) but it means the same key means different things depending on the preset.
+> ★ **There is no "mounts `role-briefs` ⇒ keep-only" rule.** An earlier version (v0.7.1) did apply `preset_allow[brief]` as a keep-only list from the brief module, but it was **removed in v0.14.5**: it wrote its restriction on the preset *generation* layer (shared by every session under that preset) and read the tool set through a scope-less view, so the router's visible surface collapsed to 6 tools and its main dispatch channel never showed up. The plugin now only injects prompt briefs; **all trimming authority lives in the host side**. A subagent that needs a keep-only surface gets one through `dispatch_composed`, not through a preset list.
 
 For a **main session**: if an allow-list applies it becomes keep-only (and `main_deny` is not layered on); otherwise `main_deny` ∪ `main_preset_extra_deny[preset]` is denied. Note that `main_preset_allow` falls back to the shared `preset_allow[preset]` key when the former is not set — and the shared key is keep-only on the main-session path too. The plugin logs a warning when that fallback happens, so you can spot it in the host log.
 
@@ -201,9 +201,9 @@ A router needs to know **which capabilities it can dispatch and what each one do
 ...
 ```
 
-Measured on a real session: the main session carried **87,947 bytes** of tool definitions (40,811 descriptions + 47,136 parameters); the router face carried **21,029 bytes** and knew only 19 tool *names* — nothing about what those tools did. The catalogue covers the same ground in **748 bytes**.
+Measured on a real session: the main session carried **87,947 bytes** of tool definitions (40,811 descriptions + 47,136 parameters); the router face carried **21,029 bytes** and knew only 19 tool *names* — nothing about what those tools did. The catalogue covers the same ground in **753 bytes**.
 
-It is generated at **deploy time** and injected into decision-facing role briefs, because switching surfaces mid-session loses more than it saves (measured cache hit rate: 86.3%; break-even is ~16 turns, while the catalogue is re-sent a median of 4 times per session).
+It is generated at **deploy time** and injected into decision-facing role briefs (the injection whitelist currently covers **only `cordis-router`**), because switching surfaces mid-session loses more than it saves (measured cache hit rate: 86.3%; break-even is ~16 turns, while the catalogue is re-sent a median of 4 times per session).
 
 ---
 

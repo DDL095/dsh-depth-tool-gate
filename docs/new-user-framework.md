@@ -143,19 +143,30 @@ tool-plugin-manager / prompt-slim
 ### 3.4 能力标签目录（决策面不需要 schema）
 
 router 要知道的是「**能派哪些能力、每个能干什么**」，而不是几十份工具 schema。
-插件为此维护一份**紧凑目录**，部署期静态生成并落盘，注入**决策面角色**的岗位引导：
+插件为此维护一份**紧凑目录**，部署期静态生成并落盘，注入**决策面角色**的岗位引导。
+⚠️ **注入白名单当前只含 `cordis-router` 一个角色**（`role-briefs.mjs` 的 `DECISION_BRIEFS`
+白名单）；其余派工面本版未纳入 ⇒ 别的编排角色目前**拿不到**这份目录。
+
+真实落盘样例（生产实测，2026-11-16）：
 
 ```
-# 能力标签目录 (9 标签)
-- literature (26): 多库学术检索(8库+3引擎)+引文核验+文献抽取
-- reader (10): 网页与文件轻读(只读面, 不写不派)
-...
+# 能力标签目录(部署期静态; 组装面 = 标签并集, 单件可作补丁)
+# 组装 = dispatch_composed(capabilities=[标签]); 标签即整面, 不用写工具名
+- literature(26 件): 多库学术检索(8库+3引擎)+引文核验+文献抽取
+- reader(10 件): 网页与文件轻读(只读面, 不写不派)
+- reader-lead(11 件): 轻读面 + 可再派一级(带队长)
+- literature-lead(27 件): 文献检索面 + 可再派一级(带队长)
+- ocr(11 件): 图片/PDF 版面与文字提取
+- orchestrator(6 件): 纯编排: 只有派单权与任务清单
+- bio(10 件): 生信命令行作业(shell + 文件读写)
+- web-report(11 件): 检索 + 读写成稿(网页报告)
+- router(18 件): 路由者: 派单 + 沟通 + 调度(不含执行面)
 ```
 
 ★ **实测收益**（2026-11-15，真实会话 request/header 拆包）：
 主会话 `cordis-deep` 98 件 = desc 40,811B + param 47,136B = **87,947B**；
 `cordis-router` 面 19 件 = 21,029B，**且只知道 19 个工具名**（不知道那些工具能干什么）；
-本目录覆盖 44 件工具的语义 = **748B**（生产落盘实测值，含头部 2 行 + 正文 9 行）。
+本目录覆盖 **43 件**工具的语义 = **753B**（生产落盘实测值：头部 2 行 171B + 正文 9 行 572B + 换行 10B）。
 
 ★ **为什么是部署期静态**：实测 cacheR 中位 86.3%，会话内动态换面盈亏平衡 ≈16 轮/会话，
 而实测每会话目录重发中位数仅 4 次 ⇒ 会话内换面**必然亏本**。
@@ -173,7 +184,12 @@ JS 脚本编排 subagent 群（`agent` / `pipeline` / `parallel` 钩子）。适
 
 ## 4. 治理：新用户拿到的工具面
 
-### 4.1 底线清单（`baseline_deny`，共 40 件）
+### 4.1 底线清单（`baseline_deny`）
+
+> ★ **两套数，别混**：**内建底线条 40 件**（`host.v2.mjs` 的 `DEFAULT_BASELINE` =
+> 随包 `config.default.json`，**新用户缺省态**，两处逐件同序相同）；
+> **生产运行位**则由你自己的 `config.json` 决定（本机实测 **70 件**）——
+> 治理面以**运行位**为权威，下面这张表是**内建底线条**的构成。
 
 子代理（depth > 0）**默认没有**下面这些，**无论用哪个 preset**：
 
@@ -194,7 +210,7 @@ JS 脚本编排 subagent 群（`agent` / `pipeline` / `parallel` 钩子）。适
 
 | | 主会话（depth 0） | 子代理（depth > 0） |
 |---|---|---|
-| 底线清单 | **不适用** | **适用**（40 件全裁） |
+| 底线清单 | **不适用** | **适用**（新用户缺省态 = 内建蓝本 40 件全裁；你自己的运行位多少件，以 `config.json` 为准） |
 | 裁剪依据 | `main_deny` / `main_preset_extra_deny` / preset 正面清单 | `baseline_deny` − preset 豁免集 + preset 加裁 |
 | 缺工具时 | —— | 调 `explain_gate` 看**缺了什么、被哪条规则裁的**（只读，不改配置） |
 
@@ -256,7 +272,7 @@ JS 脚本编排 subagent 群（`agent` / `pipeline` / `parallel` 钩子）。适
 新用户 profile
 ├── 主会话 cordis-router（零执行）
 │   ├── 派 subagent        → cordis-sub（全工具）      ┐
-│   ├── 派 dispatch_composed → dtg-shell（按标签组装）  ├─ 底线条 40 件全裁
+│   ├── 派 dispatch_composed → dtg-shell（按标签组装）  ├─ 底线清单全裁
 │   └── 派 workflow        → 一群 Worker               ┘
 │
 ├── 能力标签（内置 5 个）: literature / reader / reader-lead / literature-lead / ocr
@@ -266,7 +282,7 @@ JS 脚本编排 subagent 群（`agent` / `pipeline` / `parallel` 钩子）。适
 │
 ├── 工具说明台账: annotations.json（自动标注 + 质量闸 + 面板补写）
 │
-└── 治理: baseline_deny 40 件底线 / preset 豁免集 / 主会话正面清单
+└── 治理: baseline_deny 底线（内建蓝本 40 件 / 运行位以 config 为准）/ preset 豁免集 / 主会话正面清单
     缺工具 → explain_gate（只读诊断，给归因）
 ```
 
@@ -278,8 +294,8 @@ JS 脚本编排 subagent 群（`agent` / `pipeline` / `parallel` 钩子）。适
 
 | 事实 | 复核位置 |
 |---|---|
-| 4 个 preset 与其工具行 | 随包 `cordis.patch.yml` |
-| 底线条 40 件与其分组 | 随包 `config.default.json` + `host.v2.mjs` 的 `DEFAULT_BASELINE`（同源同值） |
+| **发布态 3 个** preset（cordis-router / cordis-sub / dtg-shell）与其工具行 | 随包 `cordis.patch.yml`（仓库态是 4 段，core3 裁掉 `sci-lite`；`release-out/cordis.patch.yml` 为发布态真值） |
+| 内建蓝本 40 件与其分组 | 随包 `config.default.json` + `host.v2.mjs` 的 `DEFAULT_BASELINE`（同源同值）；运行位实际件数以 `config.json` 为准 |
 | 标签表 5 个与件数 | `host.v2.mjs` 的 `DEFAULT_CAPABILITIES` |
 | 能力标签目录的形态与体积 | `host.v2.mjs` 的 `buildCapabilityCatalog` / `CAPABILITY_PURPOSE`；落盘文件在 profile 目录 `capability-catalog.txt` |
 | 岗位引导原文 | 随包 `agents-briefs/*.md`（`_common.md` + 各角色段） |

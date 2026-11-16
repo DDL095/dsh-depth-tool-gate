@@ -1104,7 +1104,11 @@ window.__ModuleLoader__.load({
 					h("div", { style: { opacity: 0.6, fontSize: 12 } }, "lock 不可用(插件为旧版或读取失败)")),
 				/* ── [v0.16.0 §1] Tab📝 工具说明: 逐件用途说明 + 待标注队列 ──
 				 * 数据源 = host 的标注台账(运行时 definition 自动初标 + 人工补写);
-				 * 「良好说明」的判据是**可执行的四条闸**(非主观打分), 面板如实展示。 */
+				 * 「良好说明」的判据是**可执行的三条闸**(非主观打分), 面板如实展示。
+				 * ★ [v0.16.4 修] 原写「四条全过 … 含动作性」—— 动作词表判据已于
+				 *   v0.16.0(MoA 盲审 P1 修·二轮)**废弃**: 生产实测假阳性率 100%
+				 *   (35/35 thin 全是词表缺口)⇒ 换成**信息增益**判据(说明须含工具名
+				 *   之外的实词)。⇒ 判据现为**三条**, 面板文案随之更正。 */
 				tab === "annot" && h("div", null,
 					h("p", { style: { fontSize: 12, opacity: 0.75 } },
 						"每件工具一句话说明用途。工具被【发现】时自动从其运行时描述生成初标; ",
@@ -1120,7 +1124,7 @@ window.__ModuleLoader__.load({
 							h("span", { style: { fontSize: 11, opacity: 0.65 } }, `人工 ${annotData.counts.manual} · 自动 ${annotData.counts.auto} · 运行时不可见 ${annotData.counts.stale}`),
 							h("button", { onClick: loadAnnot, style: { padding: "3px 10px", fontSize: 11, cursor: "pointer" } }, "↻ 刷新")),
 						h("p", { style: { fontSize: 11, opacity: 0.6, margin: "0 0 8px" } },
-							`达标判据(四条全过): 非空 · ≥${annotData.gate?.minBytes ?? 12} 字节 · 不是把工具名重念一遍 · 含动作性(说明干了什么事)。`),
+							`达标判据(三条全过): 非空 · ≥${annotData.gate?.minBytes ?? 12} 字节 · 相对工具名有信息增益(说明里含工具名之外的实词)。`),
 						(annotData.need || []).length > 0
 							? h("details", { open: true, style: { marginBottom: 12 } },
 								h("summary", { style: { cursor: "pointer", fontSize: 12 } }, `⚠ 待标注 ${annotData.need.length} 件(不达闸: 需要人工补一句)`),

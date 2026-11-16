@@ -13,21 +13,25 @@
 能，多套名单各管一层：`baseline_deny`（子代全局底线）→ `preset_extra_deny[preset]`（角色加裁）→ `preset_allow[preset]`（角色正面清单）→ `main_deny`（主会话）→ `main_preset_extra_deny[preset]` / `main_preset_allow[preset]`（主会话按角色）。同一工具名可出现在任意组合。
 
 ⚠ `preset_allow` 有**双重语义**，是本插件最容易踩的坑：
-- 对**普通子代理**＝从禁用底线里**豁免**这些名（其余照常全裁）；
-- 对**挂了 role-briefs 的 preset**（随包三个都挂了）＝**keep-only**（面就等于该清单）；
+- 对**普通子代理**＝从禁用底线里**豁免**这些名（其余照常全裁）—— 恒为豁免集，**无其它分支**；
 - 对**主会话**（未配 `main_preset_allow` 时回落共用键）＝**keep-only**，且 `main_deny` 不再叠加。
+
+⚠️ **不存在「挂了 role-briefs 的 preset 就自动 keep-only」这条规则**（源码级核实：
+`effectiveDeny()` 里 `preset_allow` 只作豁免集用；子代路径**没有任何** `restrict({allow})`
+调用 —— keep-only 只出现在**主会话**（`gateMain`）与**组装面**（`gateComposed`）两处）。
+子代侧想用 keep-only，走**组装面**（`dispatch_composed`），不走 preset 名单。
 
 ## Q4: preset 能被禁止派单吗？
 能。`preset_deny`（数组）：名单内 preset 作为子代创建时被限制到最小回报面（note_search/send_message）并记台账 `preset-denied`（红行）；fail-closed（restrict 失败兜底 deny 全量已知工具，**绝不保留完整面**）；depth0 手开会话不受限（限的是派单链）；`list_agent_presets` 枚举同步隐藏（宿主 UI 的 preset 列表仍会显示）。⚠ 已知限制：子代仍会 spawn（占资源）后才被裁——入口前置校验是改进方向。
 
 ## Q5: 某工具为什么看不到？怎么自查？
-调 `explain_gate`（只读工具，会话内 agent 调用）：返回可见数 + 被裁名单的原因归因（main_deny / baseline_deny / preset_extra_deny / preset_allow 清单外 / lock pending）。新工具首次出现会被 lock 闸门记 pending（autoDenyNew 默认拦截子代，主会话可见），需面板「闸门与发现」Tab 或 `rule` 裁决。
+调 `explain_gate`（只读工具，会话内 agent 调用）：返回可见数 + 被裁名单的原因归因（`preset_rules.deny` 用户显式禁用 / `main_deny` / `main_preset_extra_deny` / `baseline_deny` / `preset_extra_deny` / `preset_allow 正面清单外` / `lock pending` 待裁决 / `preset 自带工具` 不在本会话挂载范围；**无对应规则 ⇒ 报 `dtg-unknown`**）。新工具首次出现会被 lock 闸门记 pending（autoDenyNew 默认拦截子代，主会话可见），需面板「🚦 闸门与发现」页或 `rule` 裁决。
 
 ## Q6: 工具调用频率哪里看？
 面板「📊 调用频率」Tab 或网关方法 `usageStats()`：per-tool 总量 + per-preset 分桶 + 最近 40 个会话的明细。数据=dtg 自采（`session/event` 的 `tool/call` 事件，O(1) 内存计数，键上限 4096，超限归并 `__overflow__`），快照落盘 `depth-tool-gate.usage.json` → **重启不清零**；不落 arguments（敏感+体积）。口径=调用尝试次数（不分成败）。
 
 ## Q7: dispatch_composed / 能力标签是什么？
-动态最小工具面派单：`capabilities=["literature","reader"]` 标签取并集 → spawn 子代 + `restrict({allow})` keep-only（面外一切不可见，未来新工具自动不可见）。标签表=config `capabilities`（存在且非空时整体覆盖内置；内置 5 个：reader 8 件 / reader-lead 9 件 / ocr 9 件 / literature 22 件 / literature-lead 23 件）。标签写错=**直接失败**并列出可用标签；标签内的 MCP 工具缺失时只丢 MCP 件、其余保留（降级而非空面）。dispatch_composed 本身不进子代默认 baseline。
+动态最小工具面派单：`capabilities=["literature","reader"]` 标签取并集 → spawn 子代 + `restrict({allow})` keep-only（面外一切不可见，未来新工具自动不可见）。标签表=config `capabilities`（存在且非空时**整体覆盖**内置；内置是**5 组兜底表**，件数以 `host.v2.mjs` 的 `DEFAULT_CAPABILITIES` 现读为准 —— 本文**不抄具体件数**，抄了必随工具增删而漂）。标签写错=**直接失败**并列出可用标签；标签内的 MCP 工具缺失时只丢 MCP 件、其余保留（降级而非空面）。dispatch_composed 本身不进子代默认 baseline。
 
 **并行**：传 `tasks[]` 可一次派出多个独立子代（各有自己的 prompt 与自己的面，互不等待）——例如同时读三篇论文。顶层 `prompt`/`capabilities`/`tools` 作各任务的默认值。
 
@@ -41,5 +45,5 @@
 ## 权威数据源
 - 配置：`~/.dsh/profiles/web/depth-tool-gate.config.json`（热读，保存即生效）
 - 台账：`~/.dsh/logs/depth-tool-gate/audit.jsonl`
-- lock：`~/.dsh/logs/depth-tool-gate/depth-tool-gate.lock.json`（版本闸门，pending/denied/allowed）
+- lock：`~/.dsh/profiles/web/depth-tool-gate.lock.json`（新工具闸门状态；**四态** = `pending` / `seen` / `forced` / `preset`，详见 `audit-schema.md`）
 - 运行时：面板（设置→子代理工具面）或 `explain_gate` 工具

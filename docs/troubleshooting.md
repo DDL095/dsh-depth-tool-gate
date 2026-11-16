@@ -7,10 +7,10 @@
 | 症状 | 首查 | 常见根因 |
 |---|---|---|
 | 子代"变笨"（无引导） | 台账 `role-brief-missing` | agents-briefs/ 缺文件（发布包 files 漏装/被删）；npm 装的旧版无 v0.8.2 修复 |
-| 子代缺文件能力 | 面板 Tab7 闸门 pending | preset 行集工具整批首见被 autoDenyNew 拦（已知会整批发生）——批量放行或关 autoDenyNew |
+| 子代缺文件能力 | 面板「🚦 闸门与发现」页的 pending 栏 | preset 行集工具整批首见被 autoDenyNew 拦（已知会整批发生）——批量放行或关 autoDenyNew |
 | 某工具子代调不到 | `explain_gate` | 归因直接给答案（main_deny/baseline/extra/allow 外/pending） |
 | 面板「未知 op」 | client callGate 分支 | host/client 版本不齐（host 新 client 旧）——刷新页面重载 client 半 |
-| 频率 Tab 恒 0 | 面板 Tab5 拉取 | 快照已落盘，**重启不清零**；恒 0 且刚有调用=双实例 pick() 选中未采集实例（已知限制） |
+| 频率页恒 0 | 面板「📊 调用频率」页拉取 | 快照已落盘，**重启不清零**；恒 0 且刚有调用=双实例 pick() 选中未采集实例（已知限制） |
 | 子代面比预期还大 | 台账 preset-denied 的 degraded | preset_deny 被触发且走了 fail-closed 兜底（degraded=true 是正常防御）；若无台账记录但面大=gate 整个 skipped（查 skipped 原因） |
 | 裁剪对已开会话不生效 | — | by-design：热读只对**之后创建或恢复**的 agent 生效 |
 | preset_deny 后子代仍 spawn | 台账 | by-design（v2.1 已知限制）：拦截在创建后非入口前；资源仍被占——高价值场景配 maxDepth/并发闸 |

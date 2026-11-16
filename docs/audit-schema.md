@@ -23,7 +23,7 @@
 | supplementedFromSnapshot | number | 补挂中**取自派发时快照**的件数（快照 = 子代理面与主会话此后怎么变无关） |
 | supplementedFromLive | number | 补挂中取自主会话实时面的件数（快照缺失时的回落路径；非 0 说明该子代理面可能随主会话漂移） |
 | claimCount | number | 该子代理被闸门认领的次数；>1 = 它被续派过（冷恢复会重新物化 agent 并再次过闸） |
-| lockNewNames | number | 仅在本次有新名入闸时出现：新增 pending 件数 |
+| lockNewNames | number | 仅在本次有新名入闸时出现：**lock 中全部 `pending` 件的总数**（非「本次新增」数）。本次新增量看 `pendingDenied` 的增量 |
 | skipped | string | 跳过原因（no-agent-ctx / no-tools-service / disabled 等，与裁剪计数互斥） |
 
 ### 2. 主会话裁剪（gateMain）
@@ -91,8 +91,11 @@
 | pending | 首次见到该名（运行时新名） | 待裁决 → autoDenyNew 时并入裁剪（预先闸门） |
 | seen | 裁决为放行，或首次建档时继承存量 | 已裁决/已放行（裁决权威在 config.json，lock 只记历史） |
 | forced | 该名在名单里但运行时不可达（如 preset 注册的派单工具） | 面板灰显：裁不到，由派单深度总闸管 |
+| **preset** | **v0.15 P0 起**：该名由**某个 preset 自行声明**（域 MCP 等） | **只记账，不进 deny 集** —— 来源感知：preset 层工具不该被全局闸门拦（那正是域工具被整批误杀的根因）。生产实测占 **280 件**（占比最大） |
 
 > 不存在 `denied` 态：裁决为"禁"是写进 `baseline_deny`（配置权威），lock 只把该名标 `seen`。
+> ⚠️ 但 `explain_gate` 的归因链**有** `lock denied` 一档（`host.v2.mjs` 的 `state === "denied"` 分支）
+> ⇒ 该态在**设计上被承认**，只是本版本不写入。
 > 失效条目**永不清理**（保留可见性，重装来源后自动复效）。
 
 ## 频率数据

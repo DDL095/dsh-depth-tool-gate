@@ -4,8 +4,17 @@
 
 ## v0.16.4 (2026-11-16) —— 全仓说明文档同步到现行事实 + 事实闸补两道盲区
 
-> 可校验锚: 源仓 commit `9cf2fd0`(全仓说明文档同步到现行事实 + 事实闸补两道盲区 + 新增 `probe-panel-guide`) + `7ccb6ba`(清除残留的过期 Tab 数措辞 + 探针全仓扫描判据); 发布仓 tag `v0.16.4`。
+> 可校验锚: 源仓 commit `9cf2fd0` + `7ccb6ba` + `65dbde5` + `c44db9a` + `3928a3d` + `6f8d522`; 发布仓 tag `v0.16.4`。
 > ★ 锚只列**已固化**的 commit(不列本文件自身的提交, 否则自引用即过时)。
+>
+> | 锚 | 内容 |
+> |---|---|
+> | `9cf2fd0` | 全仓说明文档同步到现行事实 + 事实闸补两道盲区（版本号 / Tab 数）+ 新增 `probe-panel-guide` |
+> | `7ccb6ba` | 清除残留的过期 Tab 数措辞 + 探针加「全仓扫描过期措辞」判据 |
+> | `65dbde5` | 修排障页签序号指错 + 工具注释册口径自相矛盾 + 探针禁「Tab 序号」指代页签 |
+> | `c44db9a` | ★ **功能修复**：网关补暴露 4 个方法 ⇒ 面板「📝 工具说明」页此前 100% 不可用；同批修 canary 重启判据假红 + client 判据文案；新增 `probe-gateway-surface` |
+> | `3928a3d` | 双路只读审计的文档漂移修正（含「已删除机制被当现行规则」这一最重一条） |
+> | `6f8d522` | ★ **第三个盲区**：`verify-track` 此前恒红且不在回归集里 ⇒ 判据改为从 config 派生；新增 `probe-regression-set` |
 
 本版是**文档批**：v0.16.3 之前，README 两版的「当前版本」一路停在 **v0.13.2**，
 而事实闸 `smoke-readme-facts.mjs` 的 27 条判据**无一条查版本号** ⇒ 文档与代码
@@ -39,7 +48,8 @@
   丢掉的正是区分维度 ⇒ 抑制可用性与分配精度。
 - **§10 能力标签目录（决策面不需要 schema）** —— router 要的是「能派哪些能力、每个能干什么」，
   不是几十份工具 schema。实测：主会话 87,947B 工具定义 vs router 面 21,029B 且只知 19 个工具名，
-  目录用 **748B** 覆盖同等信息面；部署期静态生成（会话内动态换面必亏本）。
+  目录用 **753B** 覆盖同等信息面；部署期静态生成（会话内动态换面必亏本）。
+  ⚠️ 注入白名单当前**只含 `cordis-router`**（`role-briefs.mjs` 的 `DECISION_BRIEFS`）。
 
 ### §③ 随包文档同步
 
@@ -50,21 +60,99 @@
 | `docs/parameters.md` | `DEFAULT_CAPABILITIES` 行**不再抄具体件数**（原写 9 组且件数与实测全不符）⇒ 改为「5 组内建兜底表 + 运行位整表替换」的语义 + 指向源码现读。★ **不写死代码拥有的数字**是本仓铁律，抄了必漂移 |
 | `docs/new-user-framework.md` | 新增 §3.4「能力标签目录」（0.16.0 机制此前**零提及**）；§3 标题「两种派活方式」→「派活方式与决策面」（原标题与 4 个子节不符）；§7 速查图补目录与 `explain_gate`；§8 复核表补目录形态的复核位置与对应探针 |
 
-### §④ 新增探针
+### §④ 新增探针（本批共 3 套）
 
-`scripts/probe-panel-guide.mjs`（**32 项**）—— 面板手册与 client.js 的 Tab 集合**逐名比对**
-（emoji + 判别词双锚定），期望值从代码推导；含**变异通道**：删掉一个 Tab ⇒
-「文档行数 == 代码」判据确实转红，且文档同步删该行后重新成立（证明判据非恒假）。
+| 探针 | 项数 | 守什么 |
+|---|---|---|
+| `scripts/probe-panel-guide.mjs` | **34** | 面板手册与 client.js 的 Tab 集合**逐名比对**（emoji + 判别词双锚定），期望值从代码推导；另加「全仓无过期 Tab 数措辞」与「随包文档不用 **Tab 序号**指代页签」（序号会随插页漂移，页签名不会） |
+| `scripts/probe-gateway-surface.mjs` | **13** | **面板网关方法面双向闭合**：client 调用集 ⊆ host 暴露集 ⊆ client 调用集，且每个暴露方法都有 prototype 实现。★ 既有 `probe-client-groups.mjs` C6 只在 client 源码里 grep 字符串，**查不出网关侧不存在** |
+| `scripts/probe-regression-set.mjs` | **4** | 把「哪些脚本属于回归集」变成**可核对的清单**：报出「有判据标记却不在回归集里」的脚本；变异通道 = 从清单去掉一项 ⇒ 判据确实转红 |
 
-### §⑤ 验证
+### §⑤ ★★ 功能修复：面板网关补暴露 4 个方法（锚 `c44db9a`）
 
-- 全部探针 **43 套**绿（`probe-*.mjs` 39 + `smoke-*.mjs` 2 + `verify-catalog` + `client-smoke`；本批新增 `probe-panel-guide` 一套）。
-- `smoke-readme-facts.mjs`：**137 pass / 0 fail**（修正前 132 pass / 0 fail，
+★ 这不是文案问题，是**功能缺陷**（双路只读审计交叉发现，全部实测坐实）：
+
+| 项 | 事实 |
+|---|---|
+| host 暴露的方法 | **7** 个（status / save / recent / snapshot / usageStats / rule / lockInfo） |
+| client 调用的方法 | **11** 个（`callGate`） |
+| 缺口 | `annotationsInfo` / `annotate` / `capabilityCatalog` / `splitAllow` —— client 有分支，host **根本没有** |
+| 运行时后果 | client 落到 `throw new Error("未知 op: ...")` ⇒ 面板「📝 工具说明」页（v0.16.0 头号新功能）**完全不可用**；人工补写说明**从未成功落过一次**（生产台账 `annotation-set` 实测 **0 条**，`annotations.json` 122 件全 `source:"auto"`） |
+
+修法：4 个方法加进 `remote-methods` 声明 + `GateGateway.prototype` 实现
+（wire 契约：参数名 = wire 字段，与 client 的 `callGate` 取字段名一致）。
+
+★ **同批修掉的 canary 假红**：原「进程是否加载新码」判据**只看文件 mtime** ⇒ 生产位是
+symlink（开发形态）时，任何一次拷贝/同步触碰文件（哪怕**内容一字未变**）都会让 mtime 变新
+⇒ 误报「仍是旧码」。现判据 = **该文件最后一次内容变更的时刻** vs 进程启动时间。
+★ 变异测试逼出两轮：第一版用 `git diff`（工作树 vs 索引）⇒ **假绿**（改动一旦 commit，
+工作树干净 ⇒ 把「真需要重启」也判过）；第二版兜底条款更糟，直接放行 ⇒ 终版取
+max(commit 时间, mtime)。实测 canary 从 4 passed / 1 failed 转为 **5 passed / 0 failed**。
+
+★ 同批修掉的 client 文案漂移：面板写「达标判据(**四条全过**) … 含动作性」—— 动作词表判据
+已于 v0.16.0（MoA 盲审 P1 修·二轮）**废弃**（生产实测假阳性率 100%：35/35 thin 全是词表缺口）
+⇒ 换成信息增益判据 ⇒ 面板文案改为与实现一致的「三条全过」。
+
+### §⑥ ★ 文档漂移修正（两路只读审计交叉发现，锚 `3928a3d`）
+
+★ **审计结论不整份采纳**：审计员报的「biomedical-analogy 有面板页签表」经核实**不实**
+（那几行实际是仪器清单表）⇒ 只修真项。
+
+★★ **最重的一条**：README 两版把「挂 `role-briefs` ⇒ keep-only」当**现行机制**写 ——
+该机制 **v0.7.1 确有**（`a5d7791`），但 **v0.14.5（`4e237d3`，fix 标记）已删除**：
+它把 restriction 写在 preset 的 **generation 层**（该 preset 下所有会话共享）且用
+**无参 view()**（只有全局层）⇒ router 可见面恒定塌成 **6 件**、主派单通道 `subagent`
+一次都没露面。⇒ 那正是当年 bug 的根源，而文档自 v0.14.5 起就在教它。
+修法：两版改为按**深度**分支（子代 = 豁免集 / 主会话 = keep-only），并写明该机制已被
+删除及为何删；子代要 keep-only 走 `dispatch_composed`。
+★ 现行源码核实：`role-briefs.mjs` **不含任何 `tools.restrict`**；子代路径
+（`effectiveDeny`）也**没有任何** `restrict({allow})` —— keep-only 只存在于主会话
+（`gateMain`）与组装面（`gateComposed`）。
+
+其余修正（逐条实测复核）：
+
+| 文档 | 修正 |
+|---|---|
+| README 两版 | 能力标签目录 **748B → 753B**、覆盖 **44 → 43 件**（生产落盘实测）；补「注入白名单**只含 `cordis-router`**」 |
+| `docs/parameters.md` | 上一轮我写的「router 组与 `preset_allow["cordis-router"]` 同清单」**错**（件数十巧相同 18=18 但**成员不同**）⇒ 改明写差异；lock 三态 → **四态**（+`preset`，生产 280 件）；`autoDenyNew` 位置（config.default.json **无该键**）；README「考古蓝本」节**不存在** ⇒ 指针失效 |
+| `docs/new-user-framework.md` | 复核表「4 个 preset」与同文「发布态 3 个」矛盾 ⇒ 改 3 个；底线「40 件」未区分**内建蓝本 40** vs **生产运行位 70** ⇒ 5 处加限定 |
+| `docs/audit-schema.md` | lock 状态表补 **`preset` 态**；「不存在 denied 态」→「本版本不写入」；`lockNewNames` = 「lock 中全部 pending 件的总数」（非本次新增） |
+| `docs/agent-faq.md` | lock 路径 `logs/…` → **`profiles/web/…`**（实测 71959B 在 profiles 下）；状态名 → pending/seen/forced/preset；内置标签件数按铁律**不抄**；explain_gate 归因档位补全 |
+| `docs/canary-v015.md` | §〇 当前态 v0.15.2 → **v0.16.4**；「explain_gate 不在任何标签名单里」→ **v0.16.3 起每个标签都含它**；seen 127 → **128** |
+| `docs/preset-policy.md` | `preset_rules.allow` 补作用域限定 —— 源码核实**只在主会话侧**（`strictAllow` 仅 `gateMain` 读） |
+| `docs/panel-guide.md` | 「🔒作用域外名单」→ 实为「🔒**无法关闭(preset-scoped)**」（= lock `forced` 态） |
+| `docs/tool-modules.md` / `biomedical-analogy.md` / `superagent-router.md`（仓库内） | 71→70 件、364→363 条、116→115 distinct、12→14 件被抄 8 次、20-27→18-82 件；三个标准岗位去掉已裁的 `sci-lite`；「depth=0 不归 dtg 裁剪」→ **已不成立** |
+
+### §⑦ ★ 第三个盲区：回归集本身有缺口（锚 `6f8d522`）
+
+`scripts/verify-track.mjs` **不在回归集里** ⇒ 它在 v0.16.3 之后**恒红**，却**没有任何
+回归机制会发现** —— 直到逐个人工跑才逮到（2026-11-16 实测 8 pass / 2 fail）。
+
+两条判据的根因都是「写死代码拥有的数字」：
+
+| 判据 | 原写法 | 修法 |
+|---|---|---|
+| `KNOWN_EXTRA_COUNT` | 硬编码 `= 2`（explain_gate + yuanbao） | **从 config 派生**：DENY_UNION = baseline ∪ main ∪ preset_extra ⇒ 数出「不在任何 deny 名单里的 dtg 全局工具」+ 已知抄漏件。★ v0.16.3 给能力标签补了 `describe_tools` 与 `explain_gate` ⇒ 合法多出变成 **3 件**，写死 2 必然恒红 |
+| 「router 标签 = allow 清单」 | 要求**完全相等** | 改为**差集白名单**：标签是**组装面**（要 describe_tools/explain_gate），allow 是**子代豁免面**（要 preset_dispatch/preset_send_message）⇒ 职责不同、成员本就该不同；差的必须是已知可解释的那几件 |
+
+⇒ 实测 `verify-track` 从 8 pass / 2 fail 转为 **10 pass / 0 fail**。
+回归集由 44 套扩到 **47 套**（纳入 `verify-track` / `test-render-logic`）。
+
+### §⑧ 验证
+
+- 回归集 **47 套**绿（`probe-*.mjs` 41 + `smoke-*.mjs` 2 + `verify-catalog` + `client-smoke`
+  + `verify-track` + `test-render-logic`；本批新增 `probe-panel-guide` /
+  `probe-gateway-surface` / `probe-regression-set` 三套）。
+- `smoke-readme-facts.mjs`：**141 pass / 0 fail**（修正前 132 pass / 0 fail，
   但那 132 项对版本号与 Tab 数**全无判据** ⇒ 假绿）。
-- 事实闸判别力**实测自证**：① 版本号退回 v0.13.2 ⇒ 立即转红；
-  ② 删掉 client.js 的 `annot` Tab ⇒ 立即转红；③ 恢复后全绿。
-- `probe-panel-guide.mjs`（33 项）判别力**实测自证**：注入一处过期「7 Tab」措辞 ⇒
-  立即转红并点名文件与措辞；恢复后 33 pass / 0 fail。
+- 判别力**实测自证**（每条都真跑断言逻辑，不是比数字）：
+  - 版本号退回 v0.13.2 ⇒ 立即转红；
+  - 删掉 client.js 的 `annot` Tab ⇒ 立即转红；
+  - 注入一处过期「7 Tab」措辞 ⇒ 立即转红并点名文件与措辞；
+  - 退回「role-briefs ⇒ keep-only」旧措辞 ⇒ 立即转红；
+  - 撤掉 host 的方法暴露 ⇒ 立即转红并点名缺哪个；
+  - 注入未提交改动到 client.js ⇒ canary 立即转红「有内容改动未加载」；
+  - 从回归集清单去掉一项 ⇒ 回归集探针立即转红。
 
 ---
 
