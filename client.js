@@ -365,6 +365,9 @@ window.__ModuleLoader__.load({
 			/* ★ [v0.16.10 修] snapshot 失败原因(原先被静默丢弃 ⇒ 降级不可见) */
 			const [snapErr, setSnapErr] = React.useState("");
 			const [lock, setLock] = React.useState(null);
+			/* ★ [v0.16.10 修·同型缺陷扫描] 两处同型的「错误丢弃」配套状态 */
+			const [lockErr, setLockErr] = React.useState("");
+			const [auditErr, setAuditErr] = React.useState("");
 			const [msg, setMsg] = React.useState("");
 			const [busy, setBusy] = React.useState(false);
 			const [tab, setTab] = React.useState("groups");   /* groups | preset | audit | gate */
@@ -432,7 +435,14 @@ window.__ModuleLoader__.load({
 					setAutoDenyNew(cfg.autoDenyNew !== false);
 					setMsg("");
 				}).catch((e) => setMsg("加载失败: " + String((e && e.message) || e)));
-				callGate("recent", 40).then((r) => { const d = unwrap(r); setAudit((d && d.entries) || []); }).catch(() => {});
+				/* ★ [v0.16.10 修·同型缺陷扫描] 原为 `.catch(() => {})` ⇒ **完全无声**
+				 *   ⇒ 读取失败时面板显示「暂无记录」⇒ 把「读不到」**谎报**成「没有」。
+				 *   ⇒ 同型于缺陷 A(错误被 client 丢弃) ⇒ 本轮一并修: 保留原因并显示。 */
+				callGate("recent", 40).then((r) => {
+					const d = unwrap(r);
+					if (d && d.ok) { setAudit((d && d.entries) || []); setAuditErr(""); }
+					else { setAudit([]); setAuditErr((d && d.error) || "返回 ok:false(原因未给出)"); }
+				}).catch((e) => { setAudit([]); setAuditErr(String((e && e.message) || e)); });
 				/* ★ [v0.16.10 修] snapshot 失败时**保留错误原因**, 不再静默丢成 null。
 			 * 原实现 `setSnap(d && d.ok ? d : null)` 把 {ok:false,error:"..."} 的
 			 * error 字段直接丢弃 ⇒ 面板只显示"未裁决面不可用"一句含糊提示,
@@ -445,7 +455,14 @@ window.__ModuleLoader__.load({
 				if (d && d.ok) { setSnap(d); setSnapErr(""); }
 				else { setSnap(null); setSnapErr((d && d.error) || "快照返回 ok:false(原因未给出)"); }
 			}).catch((e) => { setSnap(null); setSnapErr(String((e && e.message) || e)); });
-				callGate("lockInfo").then((r) => { const d = unwrap(r); setLock(d && d.ok ? d : null); }).catch(() => setLock(null));
+				/* ★ [v0.16.10 修·同型缺陷扫描] 原为 `.catch(() => setLock(null))`
+			 *   ⇒ 面板虽显示「lock 不可用」, 但**原因被丢** ⇒ 用户分不清是「读取失败」
+			 *     还是「插件为旧版」⇒ 保留原因, 提示里带上它。 */
+			callGate("lockInfo").then((r) => {
+				const d = unwrap(r);
+				if (d && d.ok) { setLock(d); setLockErr(""); }
+				else { setLock(null); setLockErr((d && d.error) || "返回 ok:false(原因未给出)"); }
+			}).catch((e) => { setLock(null); setLockErr(String((e && e.message) || e)); });
 				setPresetError("");
 				listPresets().then(setPresets).catch((e) => setPresetError("角色注册表加载失败(仍可用已有/手动 ID): " + String((e && e.message) || e)));
 			}, [callGate, listPresets]);
@@ -1283,7 +1300,11 @@ window.__ModuleLoader__.load({
 /* ── Tab3: 台账 ── */
 				tab === "audit" && h("div", null,
 					h("p", { style: { fontSize: 12, opacity: 0.75 } }, "每行=一个会话/子代理诞生时的裁剪快照(只增不改); 红色 ev 行=治理事件(lock/config 损坏等)。文件: ", h("code", null, data.audit_path)),
-					audit.length === 0 ? h("div", { style: { opacity: 0.6, fontSize: 12 } }, "暂无记录(重启后首个子代理诞生时开始记账)") :
+					/* ★ [v0.16.10 修·同型缺陷扫描] 区分「真的没有」与「读不到」:
+					 *   原实现读取失败也走这一支 ⇒ 把失败**谎报**成「暂无记录」。 */
+					auditErr
+						? h("div", { style: { color: "#c66", fontSize: 12 } }, "⚠ 台账读取失败(不是「暂无记录」): ", h("code", null, auditErr))
+						: audit.length === 0 ? h("div", { style: { opacity: 0.6, fontSize: 12 } }, "暂无记录(重启后首个子代理诞生时开始记账)") :
 					h("table", { style: { borderCollapse: "collapse", width: "100%" } },
 						h("thead", null, h("tr", null, ["时间(本地)", "会话/子代", "深度", "角色/事件", "禁用", "pending", "裁后可见", "补挂", "续派", "缺名/错误"].map((t) => h("th", { key: t, style: th }, t)))),
 						h("tbody", null, audit.map((e, i) => h("tr", { key: i, style: { borderTop: "1px solid rgba(128,128,128,.15)" } },
@@ -1335,7 +1356,11 @@ window.__ModuleLoader__.load({
 						h("details", null,
 							h("summary", { style: { cursor: "pointer", fontSize: 12, opacity: 0.75 } }, "lock 原始 JSON"),
 							h("textarea", { readOnly: true, value: JSON.stringify(lock.lock, null, 1), style: { width: "100%", minHeight: 200, fontFamily: "monospace", fontSize: 11, padding: 6, boxSizing: "border-box" } })))) :
-					h("div", { style: { opacity: 0.6, fontSize: 12 } }, "lock 不可用(插件为旧版或读取失败)")),
+					/* ★ [v0.16.10 修·同型缺陷扫描] 提示里带上**原因**
+					 *   (原来只有一句「插件为旧版或读取失败」⇒ 用户分不清是哪一种)。 */
+					h("div", { style: { color: lockErr ? "#c66" : "rgba(0,0,0,.6)", fontSize: 12 } },
+						"lock 不可用(插件为旧版或读取失败)",
+						lockErr ? h("span", null, " — 原因: ", h("code", null, lockErr)) : null)),
 				/* ── [v0.16.0 §1] Tab📝 工具说明: 逐件用途说明 + 待标注队列 ──
 				 * 数据源 = host 的标注台账(运行时 definition 自动初标 + 人工补写);
 				 * 「良好说明」的判据是**可执行的三条闸**(非主观打分), 面板如实展示。
