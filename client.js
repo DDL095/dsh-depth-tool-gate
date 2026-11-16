@@ -20,7 +20,7 @@
  *     与 README 两版里写版本号的既有做法完全同构。
  *   ★ 宿主那侧不写死: 直接读 host status 下发的 version(= host 自己的 package.json)。
  */
-const CLIENT_VERSION = "0.16.9";
+const CLIENT_VERSION = "0.16.10";
 
 window.__ModuleLoader__.load({
 	/* 模块注册 id 必须 == 包名(package.json 的 name): 宿主 arrive(row) 取
@@ -176,13 +176,28 @@ window.__ModuleLoader__.load({
 		];
 
 		/* 取分组: host 下发的自动分组优先; host 不可用/未就绪 ⇒ 回落硬编码表。
-		 * ★ 回落必须**可见**(组标题带来源标注), 否则用户会以为"自动归类没生效"。 */
+		 * ★ 回落必须**可见**(组标题带来源标注), 否则用户会以为"自动归类没生效"。
+		 *
+		 * ★★ [v0.16.10 修·用户报告] 原来这个 `fromHost` 标记**被算出来却从无消费点**
+		 *   (grep 全文件只有上面 4 处命中) ⇒ 注释承诺的"回落可见"从未兑现。
+		 *   后果(实测): host 侧 snapshot() 一旦抛错 ⇒ snap=null ⇒ 静默退回 7 组
+		 *   硬编码表 ⇒ 「➕ 配置内未分组」把 73 件里的 **34 件**全塞进兜底组
+		 *   (34 恰等于 73−39 的回退表算式 ⇒ 反证当时用的就是回退表)
+		 *   ⇒ 面板显示的是**错的分组**, 而用户看到的只是"兜底组件多", 毫无异常提示。
+		 * ⇒ 修法: 回退表的组标题**当场标注**「(回退表)」, 并在页面顶部给出
+		 *   一条显式告警条 —— 降级必须**看得见**, 否则就是静默说谎。 */
 		const pickGroups = (snap) => {
 			const fromHost = Array.isArray(snap?.groups) && snap.groups.length
 				? snap.groups.map((g) => ({ ...g, title: g.title || g.key, names: g.names || [], note: g.note || "", fromHost: true }))
 				: null;
 			if (fromHost) return fromHost;
-			return GROUPS_FALLBACK.map((g) => ({ ...g, fromHost: false }));
+			return GROUPS_FALLBACK.map((g) => ({
+				...g,
+				fromHost: false,
+				/* ★ 回退表标题带来源标注(兑现上方注释的"回落必须可见") */
+				title: g.title + "(回退表)",
+				note: (g.note || "") + " · ⚠ 运行时自动分组未送达(快照不可用)—— 本表是**内置回退表**, 分组可能不完整; 刷新重试",
+			}));
 		};
 
 		/* [v0.14.2→v0.14.3] 「常用件表」= 结构化清单 + 逐件用途。
@@ -347,6 +362,8 @@ window.__ModuleLoader__.load({
 			const [autoDenyNew, setAutoDenyNew] = React.useState(true);
 			const [audit, setAudit] = React.useState([]);
 			const [snap, setSnap] = React.useState(null);
+			/* ★ [v0.16.10 修] snapshot 失败原因(原先被静默丢弃 ⇒ 降级不可见) */
+			const [snapErr, setSnapErr] = React.useState("");
 			const [lock, setLock] = React.useState(null);
 			const [msg, setMsg] = React.useState("");
 			const [busy, setBusy] = React.useState(false);
@@ -416,7 +433,18 @@ window.__ModuleLoader__.load({
 					setMsg("");
 				}).catch((e) => setMsg("加载失败: " + String((e && e.message) || e)));
 				callGate("recent", 40).then((r) => { const d = unwrap(r); setAudit((d && d.entries) || []); }).catch(() => {});
-				callGate("snapshot").then((r) => { const d = unwrap(r); setSnap(d && d.ok ? d : null); }).catch(() => setSnap(null));
+				/* ★ [v0.16.10 修] snapshot 失败时**保留错误原因**, 不再静默丢成 null。
+			 * 原实现 `setSnap(d && d.ok ? d : null)` 把 {ok:false,error:"..."} 的
+			 * error 字段直接丢弃 ⇒ 面板只显示"未裁决面不可用"一句含糊提示,
+			 * 而分组却**静默**退化成内置回退表继续渲染 ⇒ 用户看到的是一份
+			 * 错的分组表, 却没有任何异常提示(实测: 这就是 34 件兜底组的成因,
+			 * 静默了整整 3 天)。
+			 * ⇒ 修法: 失败时把错误文本存进 snapErr, 页面顶部渲染显式告警条。 */
+			callGate("snapshot").then((r) => {
+				const d = unwrap(r);
+				if (d && d.ok) { setSnap(d); setSnapErr(""); }
+				else { setSnap(null); setSnapErr((d && d.error) || "快照返回 ok:false(原因未给出)"); }
+			}).catch((e) => { setSnap(null); setSnapErr(String((e && e.message) || e)); });
 				callGate("lockInfo").then((r) => { const d = unwrap(r); setLock(d && d.ok ? d : null); }).catch(() => setLock(null));
 				setPresetError("");
 				listPresets().then(setPresets).catch((e) => setPresetError("角色注册表加载失败(仍可用已有/手动 ID): " + String((e && e.message) || e)));
@@ -693,9 +721,17 @@ window.__ModuleLoader__.load({
 						key: isMain ? "_cfg_extra_main" : "_cfg_extra_base",
 						title: `➕ 配置内未分组(${extra.length})`,
 						names: extra,
+						/* ★ [v0.16.10 修·用户报告] 说明要说清**取消勾选后它去哪**。
+						 *   用户困惑原文: "取消禁用后就会消失 —— 是这里只会留存禁用的么?"
+						 *   ⇒ 真相: 本组 = 「**配置名单里**、且当前分组覆盖不到的件」。
+						 *     取消勾选 ⇒ 该件**移出配置名单** ⇒ 它本就不再是"配置内的件"
+						 *     ⇒ 从本组消失是**正确**语义, 不是丢失。
+						 *   ★ 它并没有"凭空消失": 移出名单后它回到「未裁决工具(运行时快照)」
+						 *     区(可见、可再勾选), 或落进它真正所属的分组(动态分组生效时)。
+						 *   ⇒ 文案必须把这条链路说破, 否则用户只能靠猜。 */
 						note: isMain
-							? "main_deny 中不属于任何固定分组的条目(未注册/已改名的工具会落这里)"
-							: "baseline_deny 中不属于任何固定分组的条目(未注册/已改名的工具会落这里)",
+							? "main_deny 中不属于任何固定分组的条目。取消勾选 ⇒ 该件移出 main_deny 配置名单 ⇒ 从本组消失(不是丢失), 它会回到「未裁决工具」区, 或落进它真正所属的分组。"
+							: "baseline_deny 中不属于任何固定分组的条目。取消勾选 ⇒ 该件移出 baseline_deny 配置名单 ⇒ 从本组消失(不是丢失), 它会回到「未裁决工具」区, 或落进它真正所属的分组。",
 					});
 				}
 				const twoLayer = !forPreset;
@@ -806,6 +842,16 @@ window.__ModuleLoader__.load({
 						"版本 ", h("b", { style: { color: same ? "#7c8" : "#e8a33d" } }, cliVer || "?"),
 						hostVer && !same ? h("span", { title: "宿主侧(裁剪/闸门/台账)仍在跑旧版本 —— host 侧改动必须重启 DSH 才生效; 面板 client 刷新即已新", style: { color: "#e8a33d" } }, " · 宿主 " + hostVer + " 待重启") : null);
 				})(),
+				/* ★ [v0.16.10 修·用户报告] **降级告警条**: 运行时快照不可用时显式提示。
+				 * ★ 为什么必须显眼: 快照一坏 ⇒ 分组静默退化成内置回退表 ⇒ 「配置内未分组」
+				 *   会凭空多出几十件(实测 34 件)⇒ 用户看到的是**错的分组**却毫无异常提示,
+				 *   还会以为"我刚取消了禁用, 工具怎么不见了"(实为分组表整体失真)。
+				 *   ⇒ 降级必须**看得见**(与「回落必须可见」同一纪律)。 */
+				snapErr ? h("div", { style: { background: "rgba(198,102,102,.12)", border: "1px solid rgba(198,102,102,.45)", borderRadius: 6, padding: "8px 10px", margin: "8px 0", fontSize: 12, color: "#e99" } },
+					h("b", null, "⚠ 运行时快照不可用 —— 分组已降级为内置回退表(分组可能不完整)"),
+					h("div", { style: { fontSize: 11, marginTop: 3, opacity: 0.9 } }, "原因: ", h("code", null, snapErr)),
+					h("div", { style: { fontSize: 11, marginTop: 3, opacity: 0.8 } }, "⇒ 「➕ 配置内未分组」的件数因此偏大(兜底组装的是**分组覆盖不到的件**, 不是异常); 点上方 ↻ 刷新重试。"),
+				) : null,
 				/* 开关 + 保存 + 统计 + 闸门摘要 */
 				h("div", { style: { display: "flex", alignItems: "center", gap: 12, marginBottom: 10, flexWrap: "wrap" } },
 					h("label", { style: { cursor: "pointer", display: "flex", alignItems: "center", gap: 6 } },

@@ -2245,8 +2245,23 @@ const gateSvc = {
 			/* [v0.16.0 §1] 标注台账并入快照: 面板一处拿到
 			 *   ① 每件工具的一句说明 ② 待标注队列(质量不达标) ③ 质量计数。
 			 * ★ 现读现算(无缓存): 人工刚标注完刷新面板即可见(热生效)。 */
-			const annot = annotationsInfo();
-			return { ok: true, ...snap, ruledCount: ruled.length, undiscovered, stale, pending, forced, presetFaces, groups, originUpdatedAt: origin.updatedAt || null, annotations: annot.ok ? annot : { ok: false, error: annot.error } };
+			/* ★★ [v0.16.10 修·用户报告] 这里**必须**写成 `gateSvc.annotationsInfo()`。
+			 * 缺陷(2026-11-16 实测坐实): 裸调 `annotationsInfo()` ⇒ ReferenceError
+			 *   (annotationsInfo 只是 gateSvc 的**对象方法**, 模块作用域无同名函数)
+			 *   ⇒ 整个 snapshot() 抛错 ⇒ 网关返回 {ok:false, error:"annotationsInfo is not defined"}
+			 *   ⇒ 面板 `snap` 为 null ⇒ **分组退化成 client.js 硬编码回退表**
+			 *   ⇒ 「➕ 配置内未分组」把 73 件里的 34 件全塞进兜底组(生产实测: 34/14
+			 *     恰等于回退表算式 73−39 与 20−6 ⇒ 反证当时用的就是回退表)
+			 *   ⇒ **面板整整 3 天显示的是错的分组**(v0.16.0 引入, 11-15 02:21 落盘)。
+			 * ★ 这条为什么 46 套探针全绿也没抓到: 没有任何一支探针**真调过
+			 *   snapshot()** —— 探针只做静态断言, 探不到运行期 ReferenceError。
+			 *   ⇒ 新增 probe-snapshot-live.mjs 真调用闸(见该文件头注)。
+			 * ★ 兜底: 即使标注台账这一步再出岔子, 也不能连累**整个快照**
+			 *   (快照是面板的数据源, 一坏则整页退化成回退表且用户看不出来)⇒ 独立 try。 */
+			let annot = { ok: false, error: "未采集" };
+			try { annot = gateSvc.annotationsInfo(); }
+			catch (e) { warn("快照采集标注台账失败(不影响快照其余部分): " + String((e && e.message) || e)); }
+			return { ok: true, ...snap, ruledCount: ruled.length, undiscovered, stale, pending, forced, presetFaces, groups, originUpdatedAt: origin.updatedAt || null, annotations: annot && annot.ok ? annot : { ok: false, error: (annot && annot.error) || "未采集" } };
 		} catch (e) { return { ok: false, error: String((e && e.message) || e) }; }
 	},
 	/* [v0.15 §3.2] 归属表(逐 preset 自带工具)—— 面板数据源 + 可单独拉取。 */

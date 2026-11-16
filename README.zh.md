@@ -24,7 +24,7 @@ DSH 的子代理默认继承主会话的**全部工具**与**全部全局引导*
 
 > **快速开始** —— 需 DSH ≥ 0.2.2-rc.1、Node ≥ 24.9.0。在你的 DSH profile 目录（`~/.dsh/profiles/web`）下执行 `npm i dsh-depth-tool-gate`，然后把 `"dsh-depth-tool-gate"` **追加**到该 profile `package.json` 的 `dsh.profile.bundles` 数组末尾，重启 DSH，打开 **设置 → 子代理工具面**。完整步骤与前置条件见 [安装](#安装)。
 
-**当前版本 v0.16.9** · English see [README.md](README.md) · 中文文档 `docs/*.md`
+**当前版本 v0.16.10** · English see [README.md](README.md) · 中文文档 `docs/*.md`
 
 ---
 
@@ -237,7 +237,7 @@ npm i dsh-depth-tool-gate
 ```jsonc
 {
   "dependencies": {
-    "dsh-depth-tool-gate": "^0.16.9"
+    "dsh-depth-tool-gate": "^0.16.10"
   },
   "dsh": {
     "profile": {
