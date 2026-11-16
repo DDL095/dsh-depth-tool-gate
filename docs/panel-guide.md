@@ -1,4 +1,4 @@
-# panel-guide — 设置页面板逐 Tab 手册（v0.16.5, 8 Tab）
+# panel-guide — 设置页面板逐 Tab 手册（v0.16.6, 8 Tab）
 
 入口：设置 → 子代理工具面（dsh-depth-tool-gate）。顶栏：enabled 总开关 / autoDenyNew 新工具默认拦截 / 保存（热生效，仅之后创建/恢复的 agent；运行中会话不变）/ 刷新。所有时间显示为用户本地时区（存储恒为 UTC ISO）。
 
