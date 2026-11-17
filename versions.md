@@ -18,12 +18,128 @@ GitHub Release 的 tag 与资产保留作历史锚）。★ 记此表的原因�
 | 0.16.8 | 已发 | 保留 | 面板两个一级折叠区 + 修正 v0.16.5 的 14 件双渲染 + 面板版本徽标 |
 | 0.16.9 | 已发 | 保留 | 代码与 0.16.8 完全相同；**把本台账补进发布物**（0.16.8 的包内缺这一节） |
 | 0.16.10 | **待发**（用户手动） | 保留 | 修 host 侧 snapshot() 的 ReferenceError（面板分组曾静默退化成回退表 3 天）+ 三层降级可见化。★ GitHub Release 已建（tag `v0.16.10`）。**npm 尚未发布** —— 账户 2FA ⇒ EOTP 需交互式 OTP，agent 不代发。本行标「待发」= 尚未上线，**勿据本行当已发布**；publish 完成后须改标「已发」。★ 本行**只记不随发布移动的事实**：不记包哈希（versions.md 本身在包内 ⇒ 自引用循环）、不记 tag 指向的 commit（重打包会移 tag ⇒ 也会过时）、不记 npm latest（实时状态）—— 三者一律以 `node scripts/release-reconcile.mjs 0.16.10` 的 G2 三方对账为准 |
+| 0.16.11 | **待发**（用户手动） | 未建（待用户裁） | 面板「未裁决」并入「常用件」成单一常驻区（进出有迹可循）+ main_preset_allow 逐件勾选正面清单编辑器 + 修 splitAllow client 接线（拆分按钮曾抛"未知 op"）。★ 纯 client 改动，host 未动，无需重启。本行只记不随发布移动的事实，以 G2 三方对账为准 |
+| 0.16.12 | **待发**（用户手动） | 未建（待用户裁） | 「生效面预览」只读 Tab（preset 切换，主/子会话最终工具面 √/×，host previewFace 纯只读仿真复用执法函数）+ unsplitAllow 撤销拆分接线（坐实"面板提供撤销"）。★ host 改动需重启。本行只记不随发布移动的事实，以 G2 三方对账为准 |
+| 0.16.13 | **待发**（用户手动） | 未建（待用户裁） | main_preset_allow 编辑器重work：启用起点=当前生效面(previewFace)或上次记忆(不再全量80+逐个取消)；停用记住选择(localStorage)重启用恢复；加清空从零勾选。纯 client。本行只记不随发布移动的事实 |
+| 0.16.15 | **待发**（用户手动） | 未建（待用户裁） | 新增 docs/adjustment-guide.md（agent 操作向导：意图→通道决策树/四语义通道/取值边界含空名单[]口径出入/生效时点含冷会话 resume 选择性/安全调整流程/验证对账/常见误操作）+ 接入 README 双语文档表与 agent-faq 交叉引用 + 随包(files)。纯文档，host/client 逻辑未动（client 仅版本镜像）。内容覆盖 0.16.11–0.16.14 累积改动。本行只记不随发布移动的事实 |
+| 0.16.14 | **待发**（用户手动） | 未建（待用户裁） | 会话中途切 preset 重裁工具面：currentPreset 读宿主 agentPresets.presetForSession projection(回落 header)+gateMain presetOverride+agent-preset/selected 监听(dispose 旧 scope→新 preset 重裁, 仅 depth0, fail-safe)+explain_gate 归因对齐；config main_preset_allow[aigen-deep]=102 件含 6 图像件(复用 gallery-deep)⇒主会话直接生图。host 改动需重启。本行只记不随发布移动的事实 |
 
 ★ **推进纪律（用户裁定 2026-11-16 21:2x）**：发布节奏由**用户**掌握（账户 2FA ⇒
 agent 侧无法代发 npm）⇒ 推版本号前先问「这一版要不要发 npm」，
 **不要**因为「GitHub Release 已上传」就默认它该上 npm。
 ★ 本轮教训: 2026-11-16 21:1x 我连推 0.16.7 与 0.16.8 两个 tag，而 0.16.7 从未上过 npm
   ⇒ 序列过频、且给用户留了两个要决定发不发的口子。⇒ 以后**先问再推**。
+
+## v0.16.15 (2026-11-18) —— agent 调整模式指导文件 + 发现路径接入
+
+> 纯文档新增（host/client 逻辑零改动；client.js 仅版本镜像 0.16.14→0.16.15）⇒ 文档不参与运行时、无需重启；npm 包随 files 清单带上该指南。
+
+### 用户诉求
+> 「能否在相关的调整模式中，给一个agent用于指导的文件?将这个文件做好后，就推送版本，然后我手动推送npm。」
+
+### 改动
+- **新增 docs/adjustment-guide.md**（操作向导，与 agent-faq 机制问答互补，不复述）：①动手前三硬约束（热读仅新 agent / keep-only 名单即全部 main_deny 不叠加 / 先备份 fail-loud）②意图→通道决策树 ③四语义通道（keep-only·豁免·deny 叠加·访问控制；preset_allow 双语义回落、子代无 keep-only）④取值与边界（resolveMainAllow 回落链、preset_rules.allow 优先级、面=allow∩known∖rules.deny、**空名单 [] 口径出入如实标注**：resolveMainAllow 不回落但 gateMain applicable=0 不施加 restrict ⇒ 与面板「[]=裁全部」提示不一致，源码事实+推断未单独探针实证）⑤生效时点（热读仅新 agent、首轮锁定 preset、重启冷会话 guard 只自动 resume armed-goal、须区分新建 vs 现有锁定）⑥安全调整流程（备份→brace 定位 fail-loud→断言其余键全等→复核→验证）⑦验证对账（explain_gate/audit/canary 指纹变跳过/previewFace）⑧常见误操作教训。源码引用用**函数名不用行号**（防漂移）。
+- **发现路径**：package.json files 加 docs/adjustment-guide.md；README.md / README.zh.md 文档表各加一行；agent-faq.md 顶部加交叉引用。
+- **版本镜像同步 0.16.15**：package.json / client.js / README×2（Current version + caret）/ panel-guide 标题。
+
+### 验证
+- scripts/smoke-readme-facts.mjs 文档事实闸（版本一致性）。
+- 内容准确性基于本会话源码核实（gateMain/resolveMainAllow/readConfig/preset_deny）+ 重启实测（冷会话 resume 选择性，2026-11-17 23:38）。
+
+### 发布
+- **待发**（用户手动 npm，2FA/EOTP，agent 不代发）。导出 release-export.mjs（DTG_PUBLISH_REPO_URL=https://github.com/DDL095/dsh-depth-tool-gate）→ release-out → npm pack → 发布仓 tgz。GitHub Release 未建（待用户裁，沿用 0.16.11–14 形态）。本行只记不随发布移动的事实，以 G2 三方对账为准。
+
+## v0.16.14 (2026-11-17) —— 会话中途切 preset 重裁工具面 + aigen-deep 主会话生图
+
+> host 改动 ⇒ 需重启 DSH 生效(dtg 为 symlink, 任何重启即加载最新源)；config(main_preset_allow[aigen-deep]) 下次裁剪即生效, 无需重启。
+
+### 用户报告原文
+> 「我感觉还是有bug，这个会话文生图不起效，session-3ec6ec78-3db0-4bf2-aae1-370c95e7f1af，还是其派出的文生图不起效」
+
+### 根因（源码 + 落盘日志双证）
+- DSH 手选 preset 只 append `agent-preset/selected` 事件并更新 **Session projection**(registry:42 明示"读 projection 不读 header"), **不改 header.agentPreset** ⇒ header 冻结在创建值。
+- dtg 旧版只在 `agent/created` 裁剪, gateMain/explain_gate 读 header.agentPreset ⇒ 无切 preset 重裁监听 ⇒ 工具面与归因都停在创建 preset(实测 session-3ec6ec78: cordis-deep 创建后 5s 手选 aigen-deep, 生成四件仍被裁, explain_gate 归因 main_deny/cordis-deep)。
+- 图像六件在 main_deny + baseline_deny；aigen-deep 子代侧 preset_allow 已豁免(子代理可生图), 但**主会话侧无 main_preset_allow** ⇒ depth0/平级会话被 main_deny 裁。
+
+### 改动
+- **currentPreset(agent)**：优先读宿主 `agentPresets.presetForSession(session)` projection(同步、随会话日志重建 ⇒ 重启 resume 后仍是最新选择), 回落 header.agentPreset。
+- **gateMain(agent, presetOverride)**：preset 取值 = override ?? currentPreset(agent)；初裁与重裁共用同一取值链。
+- **agent-preset/selected 重裁监听**：定位该 session 的 depth0 主 agent → dispose 旧 dtg scope(tools.restrict 是**追加/交集**语义, 不 dispose 旧 deny 永不解除) → 以新 preset 重裁。仅 depth0(子代出生即裁)；fail-safe 绝不抛(串行事件)；peer 未就绪保留旧面不重裁(避免 fail-open)。台账 ev=preset-regate。
+- **explain_gate 归因读 projection**：切 preset 后归因对齐当前 preset(不再误报创建 preset)。
+- **config main_preset_allow[aigen-deep]**：102 件 keep-only(含 generate_image/generate_images/edit_image/find_inspiration/canvas_state/view_canvas 六图像件), 逐字复用 gallery-deep 成熟全量面 ⇒ aigen-deep 主会话直接生图且基础能力不缩。keep-only 语义: 名单即全部, main_deny 不叠加, 未列件被裁(可在面板 mpa 编辑器调整)。
+
+### 探针（实测）
+- probe-regate-v01614：真调用(假 ctx 捕获监听器 + 真 dsh-scope), 16 断言全绿 —— A projection 驱动初裁 / B 切换重裁(旧 scope dispose + 图像件面真翻转) / C explain_gate 归因；4 条变异通道(去监听/用 header 替代事件 preset/currentPreset 忽略 projection/去 dispose)各须转红, 判别力自证成立。
+- 全套 probe 回归 57/57 绿；沙箱 test profile@3081 实启: 新监听注册行出现 + peer 就绪 + 0 boot 错误。
+
+### 已知局限
+- DSH registry.select 在会话**首轮开始后锁定** preset 切换(agent-preset/locked) ⇒ 重裁只覆盖首轮前的手选(与报告场景一致)。
+- 已切过 preset 的旧会话(如 session-3ec6ec78)其切换事件早已 fired ⇒ 重启后需**重新选一次 aigen-deep** 触发重裁(或新建会话直接选 aigen-deep)。
+
+## v0.16.13 (2026-11-17) —— main_preset_allow 编辑器重work：生效面起点 + 跨开关记忆 + 清空从零
+
+> 纯 client 改动（previewFace 已在 v0.16.12 host 生效）⇒ 刷新浏览器即生效，无需重启。
+
+### 用户报告原文
+> 「这个不太好吧?就有无记忆相关设置的机制?开关选择后就会丢失上次选择内容。…现在一下80多个选项我要逐个取消勾选，而不是我勾选上我想要单独开给这个preset的几个工具。就是deny已经很多了，这里我希望是能先读取之前的deny情况，然后给一个当前状态，这样allow就是最后一个内容，与之前的取并集」
+
+### 改动（针对两处真 UX 缺陷）
+- **启用起点改「当前生效面」**：原 enableMpa 以运行时全量(~80+ 件全勾)为起点 ⇒ 用户要逐个取消几十件。现改为优先恢复上次记忆, 否则调 previewFace 取该 preset 主会话**当前生效面**(所有 deny 之后仍可见的件)为起点 ⇒ 用户从"现在可见的件"出发, 勾选要额外开放的几件即可(即"当前状态 ∪ 新增"的编辑体验)。previewFace 不可用(旧 host)才回退全量并告警。
+- **跨开关记忆**：原 disableMpa 直接 delete 键 ⇒ 重启用丢失选择。现停用把当前选择存 localStorage(浏览器本地, 按角色键), 重新启用优先恢复。
+- **清空从零勾选**：新增 clearMpa(置 []), 只想开放少数几件时清空后勾那几件。
+- ★ keep-only 语义不变(名单即全部, 不叠加 main_deny)；"生效面起点"只是更好的**编辑起点**, 不改 host 裁剪语义。
+
+### 探针（实测）
+- probe-panel-merge-mpa：B2 改「生效面起点」断言 + 新增 B6(记忆写)/B7(记忆读)/B8(清空), 13 断言×2+阴性=27 项全判别力。
+- 修复过程探针抓出两处真缺陷: mpaMem TDZ(readMpaMem 定义前调用) + B4 因"空清单"多处出现失判别力 ⇒ 均已修。
+- 全套 probe 实测全绿；facts 版本一致。
+
+### 已知局限
+- 记忆为**浏览器本地**(localStorage), 不随 config 同步；如需配置级持久记忆需 host 改动(另轮)。
+
+## v0.16.12 (2026-11-17) —— 「生效面预览」只读 Tab + unsplitAllow 撤销拆分接线
+
+> host 改动（previewFace + 网关暴露 previewFace/unsplitAllow）⇒ 需重启 DSH 生效；client 新 Tab 刷新可见（但预览数据需 host 重启）。
+
+### 用户报告原文
+> 「目前main_preset_allow，是针对单个工具是吧?那是否能额外有一个页面，显示当前所有逻辑判断完成后，某个preset的主会话/子会话的工具状态?就可以切换，然后相应的UI子会话主会话状态是不可选的，用 √ ×直接标记?就属于是一个总结性的观察内容。」
+> （并「继续处理修复」= 上轮遗留的 unsplitAllow）
+
+### 改动
+- **生效面预览 Tab(🔍)**：选定 preset，按已保存配置复算所有治理逻辑后的最终工具面，逐件 √/× 双列（主会话=手开 depth0 / 子会话=被派单 subagent），只读不可勾选，悬停看归因。host 新增 `previewFace(preset)` 纯只读仿真，**复用执法权威纯函数**（effectiveDeny/resolveMainAllow/resolvePresetRules/pendingDenyFor），集合组合镜像 gateMain/gateChild，不创建 agent/不 restrict/不写台账。覆盖 deny/keep-only/preset_deny 最小回报面/forced 恒可见/空清单[]/显式 deny/preset-own 各分支。
+- **unsplitAllow 接线**：host 早有 unsplitAllow(:2470) 但网关未暴露+client 无入口，而 host:2444/preset-policy.md:497 宣称"面板提供撤销"=文案谎报。本版网关暴露 + Tab👥 加「↺ 撤销拆分」按钮（已显式配 main_preset_allow 的角色可见）⇒ 谎报坐实为真。
+- **网关三方求差探针升级**：probe-gateway-op-wiring 现覆盖 13 op（含 previewFace/unsplitAllow），调用点⇄分发器⇄descriptor 全一致。
+
+### 探针（实测）
+- 新增 probe-preview-face.mjs（真 Cordis 装载真调 previewFace，8 场景+3 变异=11 项，全判别力）。
+- probe-client-render 覆盖 preview Tab（注入样例走 √/× 表分支）。
+- probe-panel-guide 补 preview emoji/keyword 锚；全文档 Tab 数 8→9 同步。
+- 全套 probe 实测全绿；facts 版本一致。
+
+### 生效说明
+- previewFace/unsplitAllow 为 host 侧 ⇒ 需重启 DSH。重启前预览 Tab 显示"host 可能未重启"。
+
+## v0.16.11 (2026-11-17) —— 面板「未裁决」并入「常用件」单一常驻区 + main_preset_allow 逐件勾选 + splitAllow 接线修复
+
+> 纯 client 改动（host.v2.mjs 未动）⇒ 刷新浏览器即生效，无需重启 DSH。
+
+### 用户报告原文
+> 「▾ 未裁决工具(运行时快照) 这个能否加入到常用件内?然后常用件内也有勾选，取消后进入未裁决。这样整个流程是较为通顺与稳定的?就工具的进出都是有迹可循的。」
+> 「main_preset_allow 我没有看到有相关的豁免的UI啊?是不是没做?」
+
+### 改动
+- **A 合并常驻区**：Tab📋 的「未裁决工具」折叠区与「🟢 常用件」常驻区合并为单一「🟢 运行时工具面(常用件 + 未裁决)」常驻区。常用件小节（逐件用途+两层勾选）在上，未裁决小节（来源筛选+两层勾选+解读）在下。取消禁用的件落回本区恒可见，勾选⇒进上方禁用清单 ⇒ 进出有迹可循，不再"消失进折叠块"。discovered 计算式（运行时−已裁决−常用件）逐字未动。
+- **B main_preset_allow 逐件勾选**：Tab🧭「主会话按角色禁用」内新增正面清单编辑器（勾选=保留该件）。启用以运行时全量为起点（零缩面），停用=delete 键回回落。mpaActive 用 Array.isArray（[]=显式空清单⇒裁掉全部，host resolveMainAllow pick-first-valid 保真）。警示 keep-only 未勾选一律裁（含核心能力）/名单即全部/不叠加 main_deny。原裸 JSON 保留作高级回退；并修假 summary（无 details 包裹）为 div——那是用户"看不到 UI"的直接原因。
+- **C splitAllow client 接线**：v0.16.4 只补 host 侧，client 分发器/descriptor 漏补 ⇒ 「拆分双语义键」按钮自诞生抛"未知 op"。本版补 descriptor（wire 名逐字=preset）+分发器分支（裸标量 arg）。
+
+### 探针（实测）
+- 新增 probe-panel-merge-mpa.mjs（10 断言×2+阴性=21 项，全变异有判别力）。
+- 新增 probe-gateway-op-wiring.mjs（调用点⇄分发器⇄descriptor 三方求差，源码派生不写死清单，15 项；抓死"修了一半"缺陷族；取数层用 stripCommentsKeepStrings 防恒空假绿）。
+- 同步 probe-panel-v144 ①c（snapLine 上方/小节）、probe-panel-layers stop 数组（+🟢 运行时工具面）。
+- 全套 50 支 probe 实测全绿；smoke-readme-facts 版本一致性通过。
+
+### 已知待办（另开一轮，需改 host+重启）
+- unsplitAllow：host 有（:2470）但网关未暴露+client 无入口；host 注释 :2444 与 docs/preset-policy.md:497 宣称"面板提供撤销"=文案谎报。
 
 ## v0.16.10 (2026-11-16) —— 面板分组静默失真 3 天的根因修复 + 三层降级可见化
 

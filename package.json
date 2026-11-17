@@ -1,6 +1,6 @@
 {
   "name": "dsh-depth-tool-gate",
-  "version": "0.16.10",
+  "version": "0.16.15",
   "private": false,
   "type": "module",
   "description": "Deny-list tool-surface gating for DSH agents: scope subagent and main-session tool visibility, gate newly appearing tools, compose minimal tool surfaces on demand, and audit every decision.",
@@ -61,6 +61,7 @@
     "docs/canary-v015.md",
     "docs/panel-guide.md",
     "docs/agent-faq.md",
+    "docs/adjustment-guide.md",
     "docs/troubleshooting.md",
     "docs/audit-schema.md",
     "docs/tool-annotations.md",

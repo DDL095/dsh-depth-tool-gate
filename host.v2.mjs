@@ -1425,7 +1425,23 @@ function resolveMainAllow(cfg, preset) {
 /* ── v0.4 主会话裁剪: depth0 专用(只裁显式 main_deny + main_preset_extra_deny 名单,
  *     不进 lock/pending; v0.14.3 起 PROTECTED_MAIN 仅警示不剔除; 求交预过滤同子代理款,
  *     未知名静默记 missing 不炸) ── */
-function gateMain(agent) {
+/* [v0.16.14] 当前生效 preset 读取: 优先宿主 agentPresets 的 Session projection
+ * (presetForSession, 同步、随会话日志重建 ⇒ 重启 resume 后仍是最新选择), 回落 header.agentPreset(创建值)。
+ * ★ 为什么不用 header: DSH 手选 preset 只 append agent-preset/selected 事件 + 更新 projection,
+ *   **不改 header.agentPreset**(registry:42 明示"读 projection 不读 header") ⇒ header 冻结在创建值。
+ *   旧版 gateMain/explain_gate 读 header ⇒ 切 preset 后工具面与归因都停在创建 preset
+ *   (实测 session-3ec6ec78: cordis-deep→aigen-deep 不重裁, 生成四件仍被裁)。 */
+function currentPreset(agent) {
+	try {
+		const reg = ROOT_CTX?.get?.("agentPresets");
+		if (reg && typeof reg.presetForSession === "function" && agent?.session) {
+			const p = reg.presetForSession(agent.session);
+			if (typeof p === "string" && p) return p;
+		}
+	} catch { /* projection 未就绪/服务缺失 ⇒ 回落 header */ }
+	return agent?.session?.header?.agentPreset || "";
+}
+function gateMain(agent, presetOverride) {
 	try {
 		const cfg = readConfig();
 		if (cfg && cfg.enabled === false) return { skipped: "disabled(配置开关)" };
@@ -1435,7 +1451,7 @@ function gateMain(agent) {
 		 *    ——名单即意图; 治理手开 router/域会话的全局行工具叠加税);
 		 *  - preset_extra_deny[preset] → 并入 main_deny 一起 deny(负面叠加制);
 		 *  - 无 preset/无键 → 原 main_deny 逻辑不动(默认主会话行为不变)。 */
-		const preset = agent?.session?.header?.agentPreset || "";
+		const preset = (typeof presetOverride === "string" && presetOverride) ? presetOverride : currentPreset(agent);
 		/* [v0.11] 主会话按角色独立键: main_preset_* 优先; 未配置回落 v0.7 共用键(手开场景现行为不变);
 		 * 共用键今后语义=子代侧(Tab👥), main_preset_*=主会话侧(Tab🧭)——两场景可分别配置 */
 		const mExtra = cfg?.main_preset_extra_deny?.[preset];
@@ -2484,6 +2500,81 @@ const gateSvc = {
 			return { ok: true, preset: p };
 		} catch (e) { return { ok: false, error: String((e && e.message) || e) }; }
 	},
+	/* [v0.16.12] 生效面预览(纯只读仿真): 给定 preset, 按**已保存配置**复算其主会话(depth0 手开)
+	 * 与子会话(被派单 subagent)的**最终工具面**, 供面板只读观察(√/×)。
+	 * ★ 复用执法权威纯函数(effectiveDeny/resolveMainAllow/resolvePresetRules/pendingDenyFor),
+	 *   集合组合逻辑镜像 gateMain/gateChild, 有一致性探针对账 ⇒ 永不分叉。
+	 * ★ 不创建 agent、不 restrict、不写台账 —— 纯计算, 零副作用。 */
+	previewFace(preset) {
+		try {
+			const p = String(preset || "").trim();
+			const cfg = readConfig();
+			if (!cfg) return { ok: false, error: "配置文件不可读" };
+			const lock = readLock();
+			const snap = snapshotNames();
+			if (!snap) return { ok: false, error: "tools 服务不可用(插件根 ctx 未就绪)" };
+			const globalSet = new Set(snap.restrictable);
+			const origin = readOrigin();
+			const own = Array.isArray(origin.presets?.[p]?.tools) ? origin.presets[p].tools.filter((n) => typeof n === "string" && n) : [];
+			const known = [...new Set([...snap.restrictable, ...own])].sort();
+			const knownSet = new Set(known);
+			const rulesRes = resolvePresetRules(cfg, p);
+			const rulesEff = rulesRes.ok ? rulesRes : null;
+			const pickArr = (...c) => { for (const x of c) if (Array.isArray(x)) return x; return null; };
+			/* 子会话面(镜像 gateChild): preset_deny ⇒ 最小回报面; 否则 known − effectiveDeny */
+			const childAccessDenied = Array.isArray(cfg.preset_deny) && cfg.preset_deny.includes(p);
+			let childMode, childFace;
+			if (childAccessDenied) {
+				childMode = "preset_deny(最小回报面)";
+				childFace = new Set(["note_search", "send_message"].filter((n) => knownSet.has(n)));
+			} else {
+				childMode = "deny(负面清单)";
+				const deny = new Set(effectiveDeny(cfg, p, lock, rulesEff));
+				childFace = new Set(known.filter((n) => !deny.has(n)));
+			}
+			/* 主会话面(镜像 gateMain): 正面清单命中 ⇒ keep-only; 否则 known − (main_deny∪角色extra∪显式deny) */
+			const { allowCfg, allowFallback, source } = resolveMainAllow(cfg, p);
+			const strictAllow = Array.isArray(rulesEff?.allow) ? rulesEff.allow : null;
+			const effectiveAllow = strictAllow !== null ? strictAllow : allowCfg;
+			const mExtra = pickArr(cfg.main_preset_extra_deny?.[p], cfg.preset_extra_deny?.[p]) || [];
+			const explicitDeny = Array.isArray(rulesEff?.deny) ? rulesEff.deny : [];
+			const mainDeny = [...new Set([...(Array.isArray(cfg.main_deny) ? cfg.main_deny : []), ...mExtra, ...explicitDeny])];
+			let mainMode, mainFace;
+			if (effectiveAllow) {
+				mainMode = "keep-only(正面清单)";
+				mainFace = new Set(effectiveAllow.filter((n) => knownSet.has(n) && !explicitDeny.includes(n)));
+			} else {
+				mainMode = "deny(负面清单)";
+				const ds = new Set(mainDeny);
+				mainFace = new Set(known.filter((n) => !ds.has(n)));
+			}
+			const baseSet = new Set(Array.isArray(cfg.baseline_deny) ? cfg.baseline_deny : []);
+			const extraSet = new Set((cfg.preset_extra_deny && cfg.preset_extra_deny[p]) || []);
+			const pendSet = new Set(lock ? pendingDenyFor(lock, cfg, p, rulesEff) : []);
+			const rows = known.map((n) => {
+				const forced = FORCED_NAMES.has(n);
+				let main = mainFace.has(n) ? "keep" : "deny";
+				let child = childFace.has(n) ? "keep" : "deny";
+				if (forced) { main = "keep"; child = "keep"; }   /* preset-scoped, restrict 够不着 ⇒ 恒可见 */
+				let childWhy = "", mainWhy = "";
+				if (child === "deny") {
+					childWhy = childAccessDenied ? "preset 访问控制(最小回报面)"
+						: baseSet.has(n) ? "baseline_deny"
+						: extraSet.has(n) ? "角色加裁 preset_extra_deny"
+						: (rulesEff?.deny || []).includes(n) ? "preset_rules.deny 显式禁用"
+						: pendSet.has(n) ? "闸门 pending 待裁决" : "deny 名单";
+				}
+				if (main === "deny") {
+					mainWhy = effectiveAllow ? "不在正面清单(keep-only)"
+						: (Array.isArray(cfg.main_deny) && cfg.main_deny.includes(n)) ? "main_deny"
+						: mExtra.includes(n) ? "角色加裁 main_preset_extra_deny"
+						: explicitDeny.includes(n) ? "preset_rules.deny 显式禁用" : "deny 名单";
+				}
+				return { name: n, main, child, forced, own: !globalSet.has(n), mainWhy, childWhy };
+			});
+			return { ok: true, preset: p, knownCount: known.length, mainMode, childMode, mainSource: source, allowFallback, rulesValid: rulesRes.ok, rows };
+		} catch (e) { return { ok: false, error: String((e && e.message) || e) }; }
+	},
 	recent(limit) {
 		try {
 			/* [v0.14.0 P2] 跨档读取: 当前档 + 归档档(归档不删历史)。 */
@@ -2708,7 +2799,7 @@ USAGE_TOTAL.set(name, (USAGE_TOTAL.get(name) || 0) + 1);
 							const lock = readLock();
 							const header = agent?.session?.header;
 							const depth = header?.delegationDepth ?? 0;
-							const preset = header?.agentPreset || "";
+							const preset = currentPreset(agent); /* [v0.16.14] projection 而非冻结 header, 切 preset 后归因对齐 */
 							const base = new Set(Array.isArray(cfg?.baseline_deny) ? cfg.baseline_deny : DEFAULT_BASELINE);
 							const mainDeny = new Set(Array.isArray(cfg?.main_deny) ? cfg.main_deny : []);
 							const extra = new Set(Array.isArray(cfg?.preset_extra_deny?.[preset]) ? cfg.preset_extra_deny[preset] : []);
@@ -3193,7 +3284,31 @@ USAGE_TOTAL.set(name, (USAGE_TOTAL.get(name) || 0) + 1);
 			const s = SCOPES.get(agent?.id);
 			if (s) { SCOPES.delete(agent.id); try { s.dispose?.(); } catch { /* noop */ } }
 		});
-		log("agent/created 监听已挂(负面清单裁剪, 仅 depth>0; agent/disposed 回收 scope)");
+		/* [v0.16.14] preset 切换重裁: DSH 手选 preset 会 append agent-preset/selected 并由 registry
+		 * 重 emit(sessionId, preset)(registry:467)。旧版无此监听 ⇒ 主会话工具面冻结在创建 preset。
+		 * 这里: 定位该 session 的 depth0 主 agent → dispose 旧 dtg scope(restrict 是**追加/交集**语义,
+		 * 不 dispose 旧 deny 永不解除) → 以新 preset 重裁。仅 depth0(子代出生即裁, 无中途切换)。
+		 * fail-safe: 绝不抛(串行事件); peer 未就绪则保留旧面不重裁(避免 fail-open 全量面)。 */
+		ctx.on("agent-preset/selected", (sessionId, preset) => {
+			try {
+				if (typeof preset !== "string" || !preset) return;
+				if (!peersReady()) { try { audit({ ts: new Date().toISOString(), ev: "preset-regate-skipped", sessionId: String(sessionId), preset, reason: "peer-missing" }); } catch { /* noop */ } return; }
+				const agents = ROOT_CTX?.get?.("agents");
+				if (!agents || typeof agents.list !== "function") return;
+				let target = null;
+				for (const a of agents.list()) {
+					const sid = a?.session?.id ?? a?.session?.header?.id ?? a?.session?.header?.sessionId;
+					if (String(sid) === String(sessionId) && (a?.session?.header?.delegationDepth ?? 0) <= 0) { target = a; break; }
+				}
+				if (!target) return;
+				const old = SCOPES.get(target.id);
+				if (old) { SCOPES.delete(target.id); try { old.dispose?.(); } catch { /* noop */ } }
+				const rec = gateMain(target, preset);
+				try { audit({ ts: new Date().toISOString(), agentId: target.id, depth: 0, ev: "preset-regate", sessionId: String(sessionId), preset, mode: rec?.mode, visibleAfter: rec?.visibleAfter, skipped: rec?.skipped, error: rec?.error }); } catch { /* noop */ }
+				log(`preset 切换重裁: ${String(target.id).slice(0, 24)} → ${preset} mode=${rec?.mode || rec?.skipped || rec?.error} 面=${rec?.visibleAfter ?? "?"}`);
+			} catch (e) { warn("preset 切换重裁异常(不阻断): " + String((e && e.message) || e)); }
+		});
+		log("agent/created 监听已挂(负面清单裁剪; agent/disposed 回收 scope; agent-preset/selected 重裁[v0.16.14])");
 		return () => {};
 	}, "dsh-depth-tool-gate.onCreated");
 
@@ -3250,6 +3365,8 @@ USAGE_TOTAL.set(name, (USAGE_TOTAL.get(name) || 0) + 1);
 				{ method: "annotate", invocation: { kind: "direct" } },
 				{ method: "capabilityCatalog", invocation: { kind: "direct" } },
 				{ method: "splitAllow", invocation: { kind: "direct" } },
+				{ method: "unsplitAllow", invocation: { kind: "direct" } },
+				{ method: "previewFace", invocation: { kind: "direct" } },
 			] } });
 			const pick = () => { try { const s = ctx.get("depthToolGate"); if (s && typeof s.status === "function") return s; } catch { /* 回落闭包 */ } return gateSvc; };
 			GateGateway.prototype.status = async () => { try { return pick().status(); } catch (e) { return { ok: false, error: String((e && e.message) || e) }; } };
@@ -3269,6 +3386,8 @@ USAGE_TOTAL.set(name, (USAGE_TOTAL.get(name) || 0) + 1);
 			GateGateway.prototype.annotate = async (name, note) => { try { return pick().annotate(name, note); } catch (e) { return { ok: false, error: String((e && e.message) || e) }; } };
 			GateGateway.prototype.capabilityCatalog = async () => { try { return pick().capabilityCatalog(); } catch (e) { return { ok: false, error: String((e && e.message) || e) }; } };
 			GateGateway.prototype.splitAllow = async (preset) => { try { return pick().splitAllow(preset); } catch (e) { return { ok: false, error: String((e && e.message) || e) }; } };
+			GateGateway.prototype.unsplitAllow = async (preset) => { try { return pick().unsplitAllow(preset); } catch (e) { return { ok: false, error: String((e && e.message) || e) }; } };
+			GateGateway.prototype.previewFace = async (preset) => { try { return pick().previewFace(preset); } catch (e) { return { ok: false, error: String((e && e.message) || e) }; } };
 			const gw = new GateGateway(ctx);
 			log("remote 网关已挂载(depthToolGate → ctx.remote.depthToolGate)");
 			return () => { try { if (typeof gw.dispose === "function") gw.dispose(); } catch { /* noop */ } };

@@ -20,7 +20,7 @@
  *     与 README 两版里写版本号的既有做法完全同构。
  *   ★ 宿主那侧不写死: 直接读 host status 下发的 version(= host 自己的 package.json)。
  */
-const CLIENT_VERSION = "0.16.10";
+const CLIENT_VERSION = "0.16.15";
 
 window.__ModuleLoader__.load({
 	/* 模块注册 id 必须 == 包名(package.json 的 name): 宿主 arrive(row) 取
@@ -388,11 +388,21 @@ window.__ModuleLoader__.load({
 			/* [v0.11] 主会话按角色选择 + 下栏来源筛选 */
 			const [mainRoleChoice, setMainRoleChoice] = React.useState("");
 			const [srcFilter, setSrcFilter] = React.useState("全部");
+			/* [v0.16.12] 生效面预览(只读): previewFace 返回体 + 选定 preset + 错误原因 */
+			const [previewData, setPreviewData] = React.useState(null);
+			const [previewPreset, setPreviewPreset] = React.useState("");
+			const [previewErr, setPreviewErr] = React.useState("");
 			const loadUsage = React.useCallback(() => {
 				callGate("usageStats").then((r) => { const d = unwrap(r); setUsage(d && d.ok ? d : { ok: false, error: (d && d.error) || "不可用" }); }).catch((e) => setUsage({ ok: false, error: String((e && e.message) || e) }));
 			}, [callGate]);
 			/* [v0.16.0 §2] 决策面能力标签目录 */
 			const [catalogData, setCatalogData] = React.useState(null);
+			/* [v0.16.12] 拉取某 preset 的生效面(纯只读仿真, host previewFace)。失败保留原因。 */
+			const loadPreview = React.useCallback((p) => {
+				if (!p) return;
+				setPreviewErr("");
+				callGate("previewFace", p).then((r) => { const d = unwrap(r); if (d && d.ok) { setPreviewData(d); } else { setPreviewData(null); setPreviewErr((d && d.error) || "返回 ok:false(原因未给出)"); } }).catch((e) => { setPreviewData(null); setPreviewErr(String((e && e.message) || e)); });
+			}, [callGate]);
 			const loadCatalog = React.useCallback(() => {
 				callGate("capabilityCatalog").then((r) => { const d = unwrap(r); setCatalogData(d && d.ok ? d : { ok: false, error: (d && d.error) || "不可用" }); }).catch((e) => setCatalogData({ ok: false, error: String((e && e.message) || e) }));
 			}, [callGate]);
@@ -499,6 +509,8 @@ window.__ModuleLoader__.load({
 			const presetOptions0 = [...choiceMap.values()];
 			const effPresetChoice = presetChoice || (presetOptions0.length ? presetOptions0[0].id : "");
 			const effMainRoleChoice = mainRoleChoice || (presetOptions0.length ? presetOptions0[0].id : "");
+			const effPreviewPreset = previewPreset || (presetOptions0.length ? presetOptions0[0].id : "");
+			React.useEffect(() => { if (tab === "preview") loadPreview(effPreviewPreset); }, [tab, effPreviewPreset, loadPreview]);
 			if (effPresetChoice && effPresetChoice !== "__custom" && !choiceMap.has(effPresetChoice)) choiceMap.set(effPresetChoice, { id: effPresetChoice });
 			const presetOptions = [...choiceMap.values()];
 			const toggleName = (n) => setDraft((d) => {
@@ -536,6 +548,54 @@ window.__ModuleLoader__.load({
 				if (s.size) cur[effMainRoleChoice] = [...s]; else delete cur[effMainRoleChoice];
 				return { ...d, main_preset_extra_deny: cur };
 			});
+			/* [v0.16.11 任务B] main_preset_allow 逐件勾选正面清单(keep-only)的派生与 setter。
+			 * ★ 必须在组件体内(引用 draft/snap/effMainRoleChoice 闭包)——v0.16.0 P0 教训。
+			 * ★ mpaActive 用 Array.isArray: []=显式空正面清单(裁掉全部), 属"已启用"而非"未配置"
+			 *   (host resolveMainAllow pick-first-valid: [] 是 Array ⇒ 不回落)。 */
+			const mpaRole = effMainRoleChoice;
+			const mpaRaw = (draft && draft.main_preset_allow) || {};
+			const mpaActive = Array.isArray(mpaRaw[mpaRole]);
+			const mpaSet = new Set(mpaActive ? mpaRaw[mpaRole] : []);
+			const mpaShared = (draft && draft.preset_allow && draft.preset_allow[mpaRole]) || null;
+			const mpaSource = mpaActive ? "main_preset_allow(显式)" : (Array.isArray(mpaShared) ? "回落 preset_allow(主会话侧同为 keep-only)" : "无(负面叠加制)");
+			const mpaPool = [...new Set([...(snap?.restrictable || []), ...mpaSet])].sort();
+			/* [v0.16.13] 跨开关记忆: 停用把当前选择存 localStorage(浏览器本地), 重新启用优先恢复, 避免丢失。 */
+			const mpaMemKey = (role) => "dtg.mpa.mem." + role;
+			const readMpaMem = (role) => { try { const v = JSON.parse(localStorage.getItem(mpaMemKey(role)) || "null"); return Array.isArray(v) ? v : null; } catch { return null; } };
+			const writeMpaMem = (role, list) => { try { localStorage.setItem(mpaMemKey(role), JSON.stringify(list)); } catch { /* noop */ } };
+			const mpaMem = mpaRole ? readMpaMem(mpaRole) : null;
+			const toggleMpa = (n) => setDraft((d) => {
+				const cur = { ...(d.main_preset_allow || {}) };
+				const s = new Set(cur[mpaRole] || []);
+				if (s.has(n)) s.delete(n); else s.add(n);
+				cur[mpaRole] = [...s];
+				return { ...d, main_preset_allow: cur };
+			});
+			/* [v0.16.13] 启用起点 = 上次记忆(若有) 否则**当前生效面**(previewFace 主会话 keep 集, 已含所有 deny 结果)。
+			 * ⇒ 用户从"现在可见的件"出发, 勾选要额外开放的几件即可, 不必逐个取消 80+ 全量。
+			 * previewFace 不可用(旧 host)才回退运行时全量并告警。 */
+			const enableMpa = async () => {
+				if (!mpaRole) return;
+				const mem = readMpaMem(mpaRole);
+				let seed, note;
+				if (mem) { seed = mem; note = "✅ 已恢复上次选择(" + mem.length + " 件)"; }
+				else {
+					try {
+						const r = unwrap(await callGate("previewFace", mpaRole));
+						if (r && r.ok) { seed = r.rows.filter((x) => x.main === "keep").map((x) => x.name); note = "✅ 已按当前生效面初始化(" + seed.length + " 件), 勾选要额外开放的件即可"; }
+						else { seed = [...(snap?.restrictable || [])]; note = "⚠ previewFace 不可用, 回退运行时全量起点: " + ((r && r.error) || ""); }
+					} catch (e) { seed = [...(snap?.restrictable || [])]; note = "⚠ previewFace 异常, 回退运行时全量起点"; }
+				}
+				setDraft((d) => { const cur = { ...(d.main_preset_allow || {}) }; cur[mpaRole] = [...new Set(seed)].sort(); return { ...d, main_preset_allow: cur }; });
+				setMsg(note);
+			};
+			const disableMpa = () => {
+				writeMpaMem(mpaRole, [...mpaSet]);   /* 记住本次选择, 重新启用时恢复 */
+				setDraft((d) => { const cur = { ...(d.main_preset_allow || {}) }; delete cur[mpaRole]; return { ...d, main_preset_allow: cur }; });
+				setMsg("已停用并记住本次选择(" + mpaSet.size + " 件), 重新启用时恢复");
+			};
+			/* [v0.16.13] 清空从零勾选: 只想开放少数几件时, 清空后勾选那几件([]=显式空清单, 未勾的全裁)。 */
+			const clearMpa = () => setDraft((d) => { const cur = { ...(d.main_preset_allow || {}) }; cur[mpaRole] = []; return { ...d, main_preset_allow: cur }; });
 			/* [v0.10] pending「主会话禁」: 两步独立操作(save 落 main_deny → rule 消 pending), 每步独立报错, 第一步失败即中止不留半状态 */
 			const mainRulePending = async (n) => {
 				/* [v0.14.3 修·用户裁定] 不再拦保护件: 用户明确"所有工具都应能在 preset 中
@@ -743,7 +803,7 @@ window.__ModuleLoader__.load({
 						 *   ⇒ 真相: 本组 = 「**配置名单里**、且当前分组覆盖不到的件」。
 						 *     取消勾选 ⇒ 该件**移出配置名单** ⇒ 它本就不再是"配置内的件"
 						 *     ⇒ 从本组消失是**正确**语义, 不是丢失。
-						 *   ★ 它并没有"凭空消失": 移出名单后它回到「未裁决工具(运行时快照)」
+						 *   ★ 它并没有"凭空消失": 移出名单后它回到「未裁决工具」
 						 *     区(可见、可再勾选), 或落进它真正所属的分组(动态分组生效时)。
 						 *   ⇒ 文案必须把这条链路说破, 否则用户只能靠猜。 */
 						note: isMain
@@ -807,7 +867,7 @@ window.__ModuleLoader__.load({
 			 *   ⚠ 元教训: 「从 A 区排除」≠「从 B 区移除」——先确认 B 区是否另有勾选入口。 */
 			const keepInRuntime = snap.restrictable.filter((n) => KEEP_NAMES.has(n));
 			const discovered = snap.restrictable.filter((n) => !ruledAll.has(n) && !KEEP_NAMES.has(n));
-			const snapLine = "运行时全局工具 " + snap.restrictable.length + " 件 · 已裁决 " + snap.ruledCount + " 件 · 常用件 " + keepInRuntime.length + " 件(见下方「常用件」区, 可照常禁用) · 未裁决 " + discovered.length + " 件 · 快照 " + fmtLocal(snap.ts) + "(↻ 刷新重取)";
+			const snapLine = "运行时全局工具 " + snap.restrictable.length + " 件 · 已裁决 " + snap.ruledCount + " 件 · 常用件 " + keepInRuntime.length + " 件(见上方「常用件」小节, 可照常禁用) · 未裁决 " + discovered.length + " 件 · 快照 " + fmtLocal(snap.ts) + "(↻ 刷新重取)";
 			const openPrompt = (names, label) => {
 				const batch = names.filter((v, i, a) => a.indexOf(v) === i).slice(0, 8);
 				const text = buildAdjudicationPrompt(batch, snapLine) + (names.length > batch.length ? "\n\n(一次最多 8 件, 本批 " + batch.length + "/" + names.length + "; 余件请再生成一批)" : "");
@@ -823,7 +883,7 @@ window.__ModuleLoader__.load({
 				 *   常用件区仍在(它们照常可禁)。 */
 				discovered.length === 0 ? h("div", { style: { opacity: 0.6, fontSize: 12 } },
 					"未裁决区已空(运行时工具均已裁决)。",
-					keepInRuntime.length ? h("span", null, ` 常用件 ${keepInRuntime.length} 件见下方「常用件」区 —— 那里仍可勾选禁用。`) : null) :
+					keepInRuntime.length ? h("span", null, ` 常用件 ${keepInRuntime.length} 件见上方「常用件」小节 —— 那里仍可勾选禁用。`) : null) :
 				h("div", null,
 					h("div", { style: { display: "flex", gap: 8, marginBottom: 6, alignItems: "center", flexWrap: "wrap" } },
 						h("select", { value: srcFilter, onChange: (e) => setSrcFilter(e.target.value), title: "按来源筛选", style: { fontSize: 11, padding: "2px 6px" } },
@@ -884,7 +944,7 @@ window.__ModuleLoader__.load({
 					msg ? h("span", { style: { fontSize: 12, color: msg.startsWith("✅") ? "#6a6" : "#c66" } }, msg) : null),
 				/* Tab 页 */
 				h("div", { style: { display: "flex", gap: 4, marginBottom: 8, borderBottom: "1px solid rgba(128,128,128,.3)" } },
-					[["groups", "📋 全局工具面"], ["main", "🧭 主会话与访问"], ["preset", "👥 子代理按角色"], ["caps", "🧪 能力标签"], ["annot", "📝 工具说明"], ["usage", "📊 调用频率"], ["audit", "📜 裁剪台账"], ["gate", "🚦 闸门与发现"]].map(([k, label]) =>
+					[["groups", "📋 全局工具面"], ["main", "🧭 主会话与访问"], ["preset", "👥 子代理按角色"], ["caps", "🧪 能力标签"], ["annot", "📝 工具说明"], ["usage", "📊 调用频率"], ["audit", "📜 裁剪台账"], ["gate", "🚦 闸门与发现"], ["preview", "🔍 生效面预览"]].map(([k, label]) =>
 						h("button", { key: k, onClick: () => setTab(k), style: { padding: "5px 12px", fontSize: 12, cursor: "pointer", border: "none", borderBottom: tab === k ? "2px solid #6af" : "2px solid transparent", background: "transparent", color: "inherit", opacity: tab === k ? 1 : 0.6 } }, label))),
 
 				/* ── Tab1 [v0.10]: 双栏可折叠(上=已禁用配置, 下=未裁决快照) + 层级图例 ── */
@@ -911,7 +971,7 @@ window.__ModuleLoader__.load({
 							 *     ① 本区(兜底组)收的是「**配置名单里**、当前分组覆盖不到」的件;
 							 *     ② 取消勾选 ⇒ 该件**移出 baseline_deny 配置名单**
 							 *        ⇒ 它不再属于「配置内的件」⇒ **从本组消失**(正确语义, 非丢失);
-							 *     ③ 它本该回到下方「未裁决工具(运行时快照)」区(可见、可再勾选);
+							 *     ③ 它本该回到下方「未裁决工具」区(可见、可再勾选);
 							 *     ④ ★★ 但 v0.16.10 之前**运行时快照是坏的**(host 侧 ReferenceError)
 							 *        ⇒ 该区整段不渲染 ⇒ 取消后**没有任何别处显现**
 							 *        ⇒ 用户看到的就是「凭空消失」!
@@ -933,33 +993,32 @@ window.__ModuleLoader__.load({
 						!fold.ruledMain && h("div", { style: { padding: "0 8px 8px" } },
 							h("p", { style: { fontSize: 11, opacity: 0.65, margin: "0 0 6px" } }, "配置名单(保存落盘, 失效条目保留不清理); 勾选=入 main_deny, 取消勾选即解除。★ 与「子代理禁用」是**两个独立通道**, 互不影响。"),
 							renderRuledTable(false, "main"))),
-					h("div", { style: { background: "rgba(120,200,120,.05)", border: "1px solid rgba(120,200,120,.15)", borderRadius: 6 } },
-						h("button", { onClick: () => toggleFold("discovered"), "aria-expanded": !fold.discovered, style: { background: "transparent", border: "none", color: "inherit", font: "inherit", textAlign: "left", cursor: "pointer", display: "flex", alignItems: "center", gap: 8, width: "100%", padding: 8, boxSizing: "border-box", fontSize: 12 } },
-							h("b", null, fold.discovered ? "▸" : "▾", " 未裁决工具(运行时快照)"),
-							h("span", { style: { fontSize: 11, opacity: 0.65 } }, "未勾选=两层都可见(默认) — 点此" + (fold.discovered ? "展开" : "收起"))),
-						!fold.discovered && h("div", { style: { padding: "0 8px 8px" } }, renderDiscovered())),
-				/* [v0.14.2 修] 保留清单独立成区: 逐件给理由 + 两层勾选(仍可禁)。
-				 * 这批件此前混在"未裁决"区(位置暗示待决策)或根本没露出 ⇒ 用户无法
-				 * 确认"这些是我要保留的、且知道为什么"。 */
-				h("div", { style: { background: "rgba(120,200,120,.05)", border: "1px solid rgba(120,200,120,.15)", borderRadius: 6, marginTop: 10 } },
-					h("b", { style: { fontSize: 12 } }, "🟢 常用件(逐件理由 · 可照常禁用)"),
-					h("div", { style: { fontSize: 11, opacity: 0.7, marginTop: 2 } }, "常用检索/文件/通信类工具。★ **没有任何工具是受保护的** —— 勾选即真禁; 不勾=两层都可见。禁用主会话核心能力(read/shell 等)会让会话瘫, 但这是你的选择, 系统只提示不阻拦。"),					/* [v0.14.2 修] 只显示**本 profile 运行时真的存在**的保留件。
-					 * 缺陷: KEEP_LIST 是**固定清单**, 装在别人 profile 里(没装 zotero/paddleocr
-					 * 等 MCP)会显示一堆不存在的工具 ⇒ 噪音 + 误导(看着像装坏了)。
-					 * 修法: 以运行时 restrictable 集合过滤; snap 未就绪时**不显示本区**
-					 * (宁可缺一段, 也不谎报)。 */
-					snap ? h("table", { style: { borderCollapse: "collapse", width: "100%", marginTop: 6 } },
-						h("thead", null, h("tr", null,
-							h("th", { style: th }, "工具"), h("th", { style: th }, "用途"),
-							h("th", { style: th }, "子代理禁"), h("th", { style: th }, "主会话禁"))),
-						h("tbody", null, KEEP_LIST.filter(([n]) => restrictable.has(n) || forcedSet.has(n)).map(([n, why]) => {
-							const prot = protMain(n);
-							return h("tr", { key: n, style: { borderTop: "1px solid rgba(128,128,128,.15)" } },
-								h("td", { style: { ...td, fontFamily: "monospace", fontSize: 11 } }, n, badge(n)),
-								h("td", { style: { ...td, opacity: 0.75 } }, why),
-								h("td", { style: td, title: "勾选=入 baseline_deny: 之后创建/恢复的子代理不可见" }, h("input", { type: "checkbox", checked: denySet.has(n), onChange: () => toggleName(n) })),
-								h("td", { style: td, title: prot ? "主会话核心能力: 裁掉会让该会话失去基础作业能力(会照裁, 请确认)" : "勾选=入 main_deny: 之后创建/恢复的主会话不可见" }, h("input", { type: "checkbox", checked: mainDenySet.has(n), onChange: () => toggleMain(n) })));
-						}))) : h("div", { style: { fontSize: 11, opacity: 0.6, marginTop: 6 } }, "运行时快照未就绪 —— 保留清单暂不显示(刷新重试)。")),
+			h("div", { style: { background: "rgba(120,200,120,.05)", border: "1px solid rgba(120,200,120,.15)", borderRadius: 6, marginTop: 10 } },
+				h("button", { onClick: () => toggleFold("discovered"), "aria-expanded": !fold.discovered, style: { background: "transparent", border: "none", color: "inherit", font: "inherit", textAlign: "left", cursor: "pointer", display: "flex", alignItems: "center", gap: 8, width: "100%", padding: 8, boxSizing: "border-box", fontSize: 12 } },
+					h("b", null, fold.discovered ? "▸" : "▾", " 🟢 运行时工具面(常用件 + 未裁决)"),
+					h("span", { style: { fontSize: 11, opacity: 0.65 } }, "取消禁用的件落回本区(恒可见) — 点此" + (fold.discovered ? "展开" : "收起"))),
+				!fold.discovered && h("div", { style: { padding: "0 8px 8px" } },
+					h("p", { style: { fontSize: 11, opacity: 0.65, margin: "0 0 6px" } }, "★ 流向: 在上方「已禁用清单」取消勾选 ⇒ 该件移出配置名单 ⇒ 落回本区(恒可见, 不再消失); 在本区勾选 ⇒ 入对应层名单 ⇒ 同时出现在上方清单。进出有迹可循。"),
+						h("b", { style: { fontSize: 12 } }, "🟢 常用件(逐件理由 · 可照常禁用)"),
+						h("div", { style: { fontSize: 11, opacity: 0.7, marginTop: 2 } }, "常用检索/文件/通信类工具。★ **没有任何工具是受保护的** —— 勾选即真禁; 不勾=两层都可见。禁用主会话核心能力(read/shell 等)会让会话瘫, 但这是你的选择, 系统只提示不阻拦。"),					/* [v0.14.2 修] 只显示**本 profile 运行时真的存在**的保留件。
+						 * 缺陷: KEEP_LIST 是**固定清单**, 装在别人 profile 里(没装 zotero/paddleocr
+						 * 等 MCP)会显示一堆不存在的工具 ⇒ 噪音 + 误导(看着像装坏了)。
+						 * 修法: 以运行时 restrictable 集合过滤; snap 未就绪时**不显示本区**
+						 * (宁可缺一段, 也不谎报)。 */
+						snap ? h("table", { style: { borderCollapse: "collapse", width: "100%", marginTop: 6 } },
+							h("thead", null, h("tr", null,
+								h("th", { style: th }, "工具"), h("th", { style: th }, "用途"),
+								h("th", { style: th }, "子代理禁"), h("th", { style: th }, "主会话禁"))),
+							h("tbody", null, KEEP_LIST.filter(([n]) => restrictable.has(n) || forcedSet.has(n)).map(([n, why]) => {
+								const prot = protMain(n);
+								return h("tr", { key: n, style: { borderTop: "1px solid rgba(128,128,128,.15)" } },
+									h("td", { style: { ...td, fontFamily: "monospace", fontSize: 11 } }, n, badge(n)),
+									h("td", { style: { ...td, opacity: 0.75 } }, why),
+									h("td", { style: td, title: "勾选=入 baseline_deny: 之后创建/恢复的子代理不可见" }, h("input", { type: "checkbox", checked: denySet.has(n), onChange: () => toggleName(n) })),
+									h("td", { style: td, title: prot ? "主会话核心能力: 裁掉会让该会话失去基础作业能力(会照裁, 请确认)" : "勾选=入 main_deny: 之后创建/恢复的主会话不可见" }, h("input", { type: "checkbox", checked: mainDenySet.has(n), onChange: () => toggleMain(n) })));
+							}))) : h("div", { style: { fontSize: 11, opacity: 0.6, marginTop: 6 } }, "运行时快照未就绪 —— 保留清单暂不显示(刷新重试)。"),
+					h("b", { style: { fontSize: 12, display: "block", marginTop: 10 } }, "未裁决工具(运行时快照)"),
+					renderDiscovered())),
 					h("div", { style: { background: "rgba(232,163,61,.06)", border: "1px solid rgba(232,163,61,.2)", borderRadius: 6, padding: 8, marginTop: 10 } },
 						h("b", { style: { fontSize: 12 } }, "主会话禁用清单(main_deny)"),
 						h("span", { style: { fontSize: 11, opacity: 0.65, marginLeft: 8 } }, draft.main_deny.length + " 名 · 对之后创建/恢复的主会话隐藏(子代理不受影响); 核心能力照裁但会提示; 按角色叠加见「主会话与访问」页"),
@@ -1054,6 +1113,10 @@ window.__ModuleLoader__.load({
 											style: { padding: "3px 8px", fontSize: 11, cursor: "pointer", marginTop: 4 },
 										}, "拆分双语义键"),
 									) : null,
+								/* [v0.16.12] 撤销拆分: 已显式配 main_preset_allow 的角色可一键删键回回落(host unsplitAllow, 即时+台账)。 */
+								Array.isArray((draft.main_preset_allow || {})[selectedPreset]) ? h("div", { style: { marginTop: 6, fontSize: 11 } },
+									h("button", { onClick: async () => { setBusy(true); setMsg("撤销拆分中…"); try { const r = unwrap(await callGate("unsplitAllow", selectedPreset)); setMsg(r && r.ok ? "✅ 已撤销拆分(" + selectedPreset + "): 删 main_preset_allow ⇒ 回到回落/负面叠加" : "撤销失败: " + ((r && r.error) || "未知")); setBusy(false); load(); } catch (e) { setMsg("撤销异常: " + String((e && e.message) || e)); setBusy(false); } }, style: { padding: "3px 8px", fontSize: 11, cursor: "pointer" } }, "↺ 撤销拆分(删 main_preset_allow, 回到回落)"),
+									h("span", { style: { opacity: 0.65, marginLeft: 6 } }, "该角色已显式配 main_preset_allow; 撤销后回到共用键回落/负面叠加。")) : null,
 									/* 天然完整面 + 归属(来自 host 归属表, 用户不写工具名) */
 									face ? h("div", { style: { fontSize: 11, opacity: 0.7, marginTop: 6 } },
 										`天然完整面 ${face.face ? face.face.length : 0} 件 = 全局层 + 本角色自带 ${face.ownCount} 件`,
@@ -1259,7 +1322,24 @@ window.__ModuleLoader__.load({
 										h("input", { type: "checkbox", checked: mainRoleSet.has(n), onChange: () => toggleMainRole(n) }),
 										h("code", null, n))))) : null,
 							h("p", { style: { fontSize: 11, opacity: 0.65, marginTop: 4 } }, "运行时新工具的全局层裁决在「全局工具面」的「已禁用清单(主会话禁用)」区; 本表只管按角色叠加。"),
-							h("summary", { style: { cursor: "pointer", fontSize: 11, opacity: 0.75 } }, "高级: 正面清单(main_preset_allow)与原始 JSON"),
+														h("div", { style: { border: "1px solid rgba(120,200,120,.3)", borderRadius: 6, padding: 8, marginTop: 10, background: "rgba(120,200,120,.04)" } },
+								h("b", { style: { fontSize: 12 } }, "🎯 正面清单(main_preset_allow) — 勾选=保留该件"),
+								h("div", { style: { fontSize: 11, opacity: 0.75, marginTop: 2 } }, "角色 ", h("b", null, mpaRole || "(未选)"), " · 来源: ", mpaSource),
+								h("div", { style: { fontSize: 11, color: "#e8a33d", marginTop: 4 } }, "⚠ keep-only: 启用后未勾选的件一律裁掉(含核心能力); 名单即全部, 不再叠加 main_deny; 空清单[]=显式裁掉全部(不是「未配置」)。"),
+								mpaActive
+									? h("div", null,
+										h("div", { style: { display: "flex", gap: 8, alignItems: "center", margin: "6px 0", flexWrap: "wrap" } },
+											h("span", { style: { fontSize: 11 } }, "已启用 · 保留 " + mpaSet.size + " 件"),
+											h("button", { onClick: clearMpa, title: "清空清单(=[]), 然后只勾选你想开放给该角色的少数几件", style: { fontSize: 11, padding: "2px 10px", cursor: "pointer" } }, "清空(从零勾选)"),
+											h("button", { onClick: disableMpa, title: "删除该角色的 main_preset_allow 键回到负面叠加/回落, 但记住本次选择, 重新启用时恢复", style: { fontSize: 11, padding: "2px 10px", cursor: "pointer" } }, "停用(记住选择)")),
+										h("div", { style: { display: "flex", flexWrap: "wrap", gap: 2 } },
+											mpaPool.map((n) => h("label", { key: n, title: originOf(n).join(" — "), style: { display: "inline-flex", alignItems: "center", gap: 3, marginRight: 8, fontSize: 11, cursor: "pointer", opacity: mpaSet.has(n) ? 1 : 0.5 } },
+												h("input", { type: "checkbox", checked: mpaSet.has(n), onChange: () => toggleMpa(n) }),
+												h("code", null, n)))))
+									: h("div", { style: { marginTop: 6 } },
+										h("button", { onClick: enableMpa, disabled: !mpaRole, title: "优先恢复上次选择; 否则以当前生效面(所有 deny 之后仍可见的件)为起点, 勾选要额外开放的件即可", style: { fontSize: 11, padding: "2px 10px", cursor: "pointer" } }, "启用正面清单(初始=当前生效面)"),
+										h("span", { style: { fontSize: 11, opacity: 0.65, marginLeft: 8 } }, mpaMem ? "检测到上次选择(" + mpaMem.length + " 件), 启用将恢复; 否则以当前生效面为起点。" : "未启用 ⇒ 走负面叠加制(main_deny + 角色 extra); 启用将以当前生效面为起点(不必逐个取消全量)。"))),
+							h("div", { style: { fontSize: 11, opacity: 0.75, fontWeight: 600, marginTop: 8 } }, "高级: 正面清单(main_preset_allow)与原始 JSON"),
 							h("p", { style: { fontSize: 11, opacity: 0.7 } }, "main_preset_allow[角色]=正面清单制(名单即全部, 不再叠加 main_deny); 留空则用负面叠加制。"),
 							h("textarea", { value: JSON.stringify(draft.main_preset_allow, null, 1), onChange: (e) => { try { setDraft((d) => ({ ...d, main_preset_allow: JSON.parse(e.target.value) })); } catch { /* 编辑中 */ } }, onBlur: (e) => { try { setDraft((d) => ({ ...d, main_preset_allow: JSON.parse(e.target.value) })); } catch { setMsg("main_preset_allow 不是合法 JSON"); } }, style: { width: "100%", minHeight: 80, fontFamily: "monospace", fontSize: 11, padding: 6, boxSizing: "border-box" } }),
 							h("textarea", { value: JSON.stringify(draft.main_preset_extra_deny, null, 1), onChange: (e) => { try { setDraft((d) => ({ ...d, main_preset_extra_deny: JSON.parse(e.target.value) })); } catch { /* 编辑中 */ } }, onBlur: (e) => { try { setDraft((d) => ({ ...d, main_preset_extra_deny: JSON.parse(e.target.value) })); } catch { setMsg("main_preset_extra_deny 不是合法 JSON"); } }, style: { width: "100%", minHeight: 80, fontFamily: "monospace", fontSize: 11, padding: 6, marginTop: 6, boxSizing: "border-box" } })))),
@@ -1395,6 +1475,25 @@ window.__ModuleLoader__.load({
 								h("thead", null, h("tr", null, ["工具", "说明", "来源", "状态"].map((c) => h("th", { key: c, style: th }, c)))),
 								h("tbody", null, annotData.rows.map((r) => renderAnnotRow(r))))))
 						: null),
+				/* ── [v0.16.12] Tab🔍 生效面预览: 只读观察某 preset 主/子会话最终工具面(√/×) ── */
+				tab === "preview" && h("div", null,
+					h("p", { style: { fontSize: 12, opacity: 0.75 } }, "只读观察: 选定 preset, 按**已保存配置**复算所有治理逻辑后的最终工具面。√=可见 ×=被裁; **不可勾选**(要改请去对应 Tab)。主会话=手开该 preset 的 depth0 会话; 子会话=被派单(subagent)该 preset 的子代理。悬停 √/× 看归因。"),
+					h("div", { style: { display: "flex", alignItems: "center", gap: 8, marginBottom: 8, flexWrap: "wrap" } },
+						h("b", null, "preset"),
+						h("select", { value: effPreviewPreset, onChange: (e) => setPreviewPreset(e.target.value), style: { minWidth: 240, padding: "5px 8px", fontSize: 12 } },
+							presetOptions.filter((p2) => p2.id !== "__custom").map((p2) => h("option", { key: p2.id, value: p2.id }, p2.name && p2.name !== p2.id ? p2.name + " (" + p2.id + ")" : p2.id))),
+						h("button", { onClick: () => loadPreview(effPreviewPreset), style: { padding: "4px 10px", fontSize: 12, cursor: "pointer" } }, "↻ 刷新")),
+					previewErr ? h("div", { style: { color: "#c66", fontSize: 12 } }, "⚠ 预览不可用: ", h("code", null, previewErr)) :
+					!previewData ? h("div", { style: { opacity: 0.6, fontSize: 12 } }, "加载中…(若长期无响应, host 可能未重启到含 previewFace 的版本)") :
+					h("div", null,
+						h("p", { style: { fontSize: 12, opacity: 0.8 } }, h("b", null, previewData.preset), " · 自然面 " + previewData.knownCount + " 件 · 主会话模式: " + previewData.mainMode + " · 子会话模式: " + previewData.childMode + (previewData.allowFallback ? " · ⚠ 主会话正面清单回落共用键 preset_allow" : "")),
+						h("table", { style: { borderCollapse: "collapse", width: "100%" } },
+							h("thead", null, h("tr", null, ["工具", "主会话", "子会话", "备注"].map((c) => h("th", { key: c, style: th }, c)))),
+							h("tbody", null, previewData.rows.map((r) => h("tr", { key: r.name, style: { borderTop: "1px solid rgba(128,128,128,.15)" } },
+								h("td", { style: { ...td, fontFamily: "monospace", fontSize: 11 } }, r.name),
+								h("td", { style: { ...td, fontSize: 13, color: r.main === "keep" ? "#7c8" : "#c66" }, title: r.mainWhy || "" }, r.main === "keep" ? "√" : "×"),
+								h("td", { style: { ...td, fontSize: 13, color: r.child === "keep" ? "#7c8" : "#c66" }, title: r.childWhy || "" }, r.child === "keep" ? "√" : "×"),
+								h("td", { style: { ...td, fontSize: 10, opacity: 0.7 } }, [r.forced ? "🔒forced 恒可见" : "", r.own ? "preset 自带" : "", r.main === "deny" ? "主:" + r.mainWhy : "", r.child === "deny" ? "子:" + r.childWhy : ""].filter(Boolean).join(" · ")))))))),
 				/* [v0.10] 解读提示词弹层(跨 Tab 常驻, 就地展开) */
 				promptBox && h("div", { style: { marginTop: 10, border: "1px solid rgba(106,170,255,.3)", borderRadius: 6, padding: 8, background: "rgba(106,170,255,.06)" } },
 					h("div", { style: { display: "flex", alignItems: "center", gap: 8, marginBottom: 4 } },
@@ -1424,6 +1523,10 @@ window.__ModuleLoader__.load({
 					{ id: "depthToolGate/annotationsInfo", service: "depthToolGateGw", namespace: "depthToolGate", method: "annotationsInfo", invocation: { kind: "direct" }, parameters: [param("topN")], result: resultOf("annotationsInfo") },
 					{ id: "depthToolGate/annotate", service: "depthToolGateGw", namespace: "depthToolGate", method: "annotate", invocation: { kind: "direct" }, parameters: [param("name"), param("note")], result: resultOf("annotate") },
 					{ id: "depthToolGate/capabilityCatalog", service: "depthToolGateGw", namespace: "depthToolGate", method: "capabilityCatalog", invocation: { kind: "direct" }, parameters: [], result: resultOf("capabilityCatalog") },
+					/* [v0.16.11 修·任务C] splitAllow client descriptor: v0.16.4 只补 host 侧, client 漏补 ⇒ 拆分按钮曾抛"未知 op"。wire 名逐字=preset(host prototype 形参名)。 */
+					{ id: "depthToolGate/splitAllow", service: "depthToolGateGw", namespace: "depthToolGate", method: "splitAllow", invocation: { kind: "direct" }, parameters: [param("preset")], result: resultOf("splitAllow") },
+				{ id: "depthToolGate/unsplitAllow", service: "depthToolGateGw", namespace: "depthToolGate", method: "unsplitAllow", invocation: { kind: "direct" }, parameters: [param("preset")], result: resultOf("unsplitAllow") },
+				{ id: "depthToolGate/previewFace", service: "depthToolGateGw", namespace: "depthToolGate", method: "previewFace", invocation: { kind: "direct" }, parameters: [param("preset")], result: resultOf("previewFace") },
 				],
 			});
 			/* typert direct 调用返回信封 {ok,value}; 剥一层 + 兼容已剥形状 */
@@ -1448,6 +1551,11 @@ window.__ModuleLoader__.load({
 				if (op === "annotationsInfo") return withTimeout(svc.annotationsInfo(arg?.topN)).then(unwrap);
 				if (op === "annotate") return withTimeout(svc.annotate(arg?.name, arg?.note)).then(unwrap);
 				if (op === "capabilityCatalog") return withTimeout(svc.capabilityCatalog()).then(unwrap);
+				/* [v0.16.11 修·任务C] splitAllow 是唯一裸标量 arg(=preset 字符串, 调用点传 selectedPreset 本身), 不是 arg?.preset。 */
+				if (op === "splitAllow") return withTimeout(svc.splitAllow(arg)).then(unwrap);
+				/* [v0.16.12] unsplitAllow/previewFace 均为裸标量 arg(=preset 字符串), wire 名逐字=preset。 */
+				if (op === "unsplitAllow") return withTimeout(svc.unsplitAllow(arg)).then(unwrap);
+				if (op === "previewFace") return withTimeout(svc.previewFace(arg)).then(unwrap);
 				throw new Error("未知 op: " + String(op));
 			};
 			const slots = ctx.slots;

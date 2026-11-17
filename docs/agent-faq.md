@@ -2,6 +2,7 @@
 
 > 面向 AI agent 的机制速查：读完本文即可回答关于 dsh-depth-tool-gate 的常见问题，并知道去哪查证。
 > 人类向手册见 [panel-guide.md](./panel-guide.md)；字段字典见 [audit-schema.md](./audit-schema.md)。
+> **要动手调整工具面**（选通道/改名单/验证生效/安全流程）见 [adjustment-guide.md](./adjustment-guide.md)（操作向导）。
 
 ## Q1: dtg 是什么？裁什么？
 子代理上下文预算治理插件。三层：L1 工具面裁剪（`tools.restrict` deny/allow）、L2 提示遮蔽（prompt-slim）、L2.5 per-role 引导（role-briefs）。**裁的对象是工具面**（省每轮 tools 参数的 token 与误用面），不裁知识、不改模型。
@@ -40,7 +41,7 @@
 **续派不变面**：给已跑完的子代续派任务时，宿主冷恢复并重新物化它；闸门重新施加**同一份** allow 名单，不会落回通用 deny 名单 —— 工具面不会在一段持续的对话中途变掉。台账里该子代的 `claimCount>1` 即表示被续派过。
 
 ## Q8: 裁剪出了问题怎么排查？
-见 [troubleshooting.md](./troubleshooting.md)。核心口诀：**静默降级=最危险**（v0.8.2 起 role-brief 缺失记台账 `role-brief-missing` 可查）；面板 8 Tab 逐层对账（配置清单 vs 运行时发现 vs lock 状态 vs 台账事实）。
+见 [troubleshooting.md](./troubleshooting.md)。核心口诀：**静默降级=最危险**（v0.8.2 起 role-brief 缺失记台账 `role-brief-missing` 可查）；面板 9 Tab 逐层对账（配置清单 vs 运行时发现 vs lock 状态 vs 台账事实）。
 
 ## 权威数据源
 - 配置：`~/.dsh/profiles/web/depth-tool-gate.config.json`（热读，保存即生效）

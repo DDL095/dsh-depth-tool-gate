@@ -24,7 +24,7 @@ A DSH subagent inherits the main session's entire tool catalog and the full glob
 
 > **Quick start** — DSH ≥ 0.2.2-rc.1, Node ≥ 24.9.0. In your DSH profile directory (`~/.dsh/profiles/web`): `npm i dsh-depth-tool-gate`, then **append** `"dsh-depth-tool-gate"` to the `dsh.profile.bundles` array in that profile's `package.json`, restart DSH, and open **Settings → Subagent Tool Surface**. Full steps and prerequisites: [Install](#install).
 
-**Current version v0.16.10** · 中文说明见 [README.zh.md](README.zh.md) · 中文文档 `docs/*.md`
+**Current version v0.16.15** · 中文说明见 [README.zh.md](README.zh.md) · 中文文档 `docs/*.md`
 
 ---
 
@@ -142,20 +142,21 @@ Instead of loading the whole global instruction file into every subagent, each r
 
 A preset can mask named global system-prompt sections by registering same-named empty sections — the host's scoped-shadow mechanism then drops them entirely for that preset. A child that has no scheduling tools does not need the scheduling instructions.
 
-### 7. The panel (8 tabs)
+### 7. The panel (9 tabs)
 
 Settings → **Subagent Tool Surface** (子代理工具面). A **version badge** sits at the right of the panel title (since v0.16.8): it shows both the client version (the panel UI) and the host version (the trimming/gate/ledger code actually running); when they differ it flags "host x.y.z pending restart" — editing `client.js` takes effect on a browser refresh, while host-side changes need a DSH restart.
 
 | Tab | What it does |
 |---|---|
-| 📋 全局工具面 / Global tool surface | Three top-level collapsible zones: **disabled list (subagent deny)** / **disabled list (main-session deny)** / not-yet-ruled-on tools (runtime snapshot, with source filter, per-tool explainer, batch prompt generator). Each layer owns its own zone, so one tool appears once per layer and neither zone hides the other — the fallback group ("not in any fixed group") also collects only that layer's entries, so nothing is rendered twice; a summary line breaks the overlap down into "denied in both N / subagent only N / main-session only N". Also holds the common-tools zone (per-tool purpose + both checkboxes) and the bulk `main_deny` editor |
-| 🧭 主会话与访问 / Main session & access | Which presets may be dispatched at all; plus per-role denies for main sessions. Both are top-level collapsible zones, each with its **effective-logic explainer** (when it is evaluated / how the lists combine / fail-closed fallback / what it applies to) |
+| 📋 全局工具面 / Global tool surface | Three top-level zones: **disabled list (subagent deny)** / **disabled list (main-session deny)** / **🟢 runtime tool surface (common tools + not-yet-ruled-on)** — since v0.16.11 the last two are merged into ONE resident zone (common-tools subsection with per-tool purpose + both checkboxes on top; not-yet-ruled-on subsection with source filter, per-tool explainer, batch prompt below). Un-denying a tool lands it back in this always-visible zone; checking it moves it to the disabled list above — every tool's in/out is traceable, nothing vanishes. Each disabled layer owns its own zone (fallback group collects only that layer's entries ⇒ no double render); a summary line breaks the overlap into "denied in both N / subagent only N / main-session only N". Also holds the bulk `main_deny` editor |
+| 🧭 主会话与访问 / Main session & access | Which presets may be dispatched at all; plus per-role denies for main sessions. Both are top-level collapsible zones, each with its **effective-logic explainer**. Since v0.16.11 the per-role zone also has a **per-tool checkbox editor for `main_preset_allow`** (keep-only positive list: check = keep the tool; enable seeds from the current effective face (or restores your last selection); disable remembers your choice then deletes the key back to fallback; a clear-to-empty option lets you check only the few tools you want; warns that unchecked tools are all trimmed incl. core, and an empty list `[]` trims everything). The raw-JSON editor remains as an advanced fallback. v0.16.11 also fixed the `splitAllow` client wiring (the split button used to throw "unknown op") |
 | 👥 子代理按角色 / Subagents by role | The final deny surface per role, and the raw list editors |
 | 🧪 能力标签 / Capability tags | The tag → allow-list table used by `dispatch_composed`. The **default tag table ships with the plugin** (so anyone who installs it has the tags, no manual setup); the decision-surface catalogue is **generated automatically and written to disk** (re-generated on refresh ⇒ hot), and it is injected only into decision-surface roles |
 | 📝 工具说明 / Tool annotations | The per-tool purpose ledger: how many annotations are on file, how many pass the quality gate, and the queue of tools still needing one — editable in place |
 | 📊 调用频率 / Call frequency | Per-tool and per-preset call counts, plus the most recent 40 sessions (per-session breakdown; older sessions drop out of the list) |
 | 📜 裁剪台账 / Audit ledger | One row per agent creation, plus red rows for governance events (lock corruption, config corruption, gate errors, missing briefs) |
 | 🚦 闸门与发现 / Gate & discovery | Pending rulings (four actions per tool), and a per-item reason for every stale list entry |
+| 🔍 生效面预览 / Effective-face preview | Read-only observation (no checkboxes): pick a preset and see, after all governance logic on the saved config, each tool's final state √ visible / × trimmed, in two columns — main session (hand-opened depth0 with that preset) and child session (dispatched subagent). Hover √/× for the reason. Backed by host `previewFace`, a pure read-only simulation reusing the enforcement functions |
 
 ### 8. Read-only diagnosis (`explain_gate`)
 
@@ -221,7 +222,7 @@ npm i dsh-depth-tool-gate
 ```jsonc
 {
   "dependencies": {
-    "dsh-depth-tool-gate": "^0.16.10"
+    "dsh-depth-tool-gate": "^0.16.15"
   },
   "dsh": {
     "profile": {
@@ -365,6 +366,7 @@ The briefs live **inside the installed package**, next to `role-briefs.mjs` — 
 | [New-user framework](docs/new-user-framework.md) | **start here** — the architecture you get after installing: roles, faces, dispatch paths, boundaries |
 | [Panel guide](docs/panel-guide.md) | every tab, field by field |
 | [Agent FAQ](docs/agent-faq.md) | how the mechanism works, from an agent's point of view |
+| [Adjustment guide](docs/adjustment-guide.md) | **how to adjust** — intent→channel decision tree, semantics traps, effect timing, safe workflow |
 | [Troubleshooting](docs/troubleshooting.md) | silent-degradation family first: what to check, in what order |
 | [Audit schema](docs/audit-schema.md) | every field of the ledger and the lock file |
 | [Tool annotations](docs/tool-annotations.md) | what each governed tool is, and why it is governed |
